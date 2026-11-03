@@ -22,10 +22,10 @@
 
 | Role | Name | Enrollment No. | GitHub Username |
 |------|------|----------------|-----------------|
-| Group Lead | | | |
-| Member 2 | | | |
-| Member 3 | | | |
-| Member 4 | | | |
+| Group Lead | Arnav Jindal | 2501010651 | arnavjindal2008 |
+| Member 2 | Vanshika Mittal | 2501010497 | vanshika022007 |
+| Member 3 | Komal Ahlawat | 2501010227 | komal-20ahlawat |
+| Member 4 | Ojal Akash | 2501010311 | ojalakash-07 |
 
 **Team No.:** ____ · **Section:** ____ · **Repository URL:** ____
 
