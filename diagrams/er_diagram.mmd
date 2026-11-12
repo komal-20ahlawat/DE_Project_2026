@@ -1,0 +1,125 @@
+erDiagram
+    %% Booking subtype rule: each booking is expected to have exactly one subtype (flight_bookings or hotel_bookings).
+    %% This is validated through data integrity checks; it is NOT enforced by the current DDL constraints.
+    %% Composite FK: hotel_bookings(hotel_id, room_type_id) -> room_types(hotel_id, room_type_id).
+
+    airports ||--o{ flights : "1:N is the origin of (origin, ON DELETE RESTRICT)"
+    airports ||--o{ flights : "1:N is the destination of (destination, ON DELETE RESTRICT)"
+    airlines ||--o{ flights : "1:N operates (airline_code, ON DELETE RESTRICT)"
+    customers ||--o{ bookings : "1:N makes (customer_id, ON DELETE RESTRICT)"
+    coupons |o--o{ bookings : "1:N is applied to (optional) (coupon_code, ON DELETE RESTRICT)"
+    bookings ||--o| flight_bookings : "1:1 has flight details (type FLIGHT) (booking_id, ON DELETE CASCADE)"
+    bookings ||--o| hotel_bookings : "1:1 has stay details (type HOTEL) (booking_id, ON DELETE CASCADE)"
+    flights ||--o{ flight_bookings : "1:N is booked in (flight_id, ON DELETE RESTRICT)"
+    flight_bookings ||--o{ passengers : "1:N has passengers (booking_id, ON DELETE CASCADE)"
+    hotels ||--o{ room_types : "1:N has room types (hotel_id, ON DELETE RESTRICT)"
+    hotels ||--o{ hotel_bookings : "1:N is booked in (hotel_id, ON DELETE RESTRICT)"
+    room_types ||--o{ hotel_bookings : "1:N is booked in (composite FK: hotel_id + room_type_id) (hotel_id, room_type_id, ON DELETE RESTRICT)"
+    hotels ||--o{ hotel_reviews : "1:N receives (hotel_id is redundant) (hotel_id, ON DELETE RESTRICT)"
+    hotel_bookings ||--o| hotel_reviews : "1:1 may be reviewed (optional) (booking_id, UNIQUE, ON DELETE CASCADE)"
+
+    airports {
+        VARCHAR(3) iata_code PK "NOT NULL"
+        VARCHAR(150) airport_name "NOT NULL"
+        VARCHAR(100) city_name "NOT NULL"
+        CHAR(2) country_code "NOT NULL"
+    }
+    airlines {
+        VARCHAR(3) airline_code PK "NOT NULL"
+        VARCHAR(100) airline_name UK "NOT NULL"
+    }
+    customers {
+        INTEGER customer_id PK "NOT NULL"
+        VARCHAR(150) full_name "NOT NULL"
+        VARCHAR(255) email UK "NOT NULL"
+        VARCHAR(20) phone UK "NOT NULL"
+        VARCHAR(20) loyalty_tier "NOT NULL"
+        TIMESTAMPTZ created_at "NOT NULL"
+    }
+    coupons {
+        VARCHAR(30) coupon_code PK "NOT NULL"
+        VARCHAR(10) applies_to "NOT NULL"
+        NUMERIC(5,2) discount_pct "NOT NULL"
+        NUMERIC(12,2) max_discount "NOT NULL"
+        DATE valid_from "NOT NULL"
+        DATE valid_to "NOT NULL"
+    }
+    flights {
+        INTEGER flight_id PK "NOT NULL"
+        VARCHAR(3) airline_code FK "NOT NULL"
+        VARCHAR(3) origin FK "NOT NULL"
+        VARCHAR(3) destination FK "NOT NULL"
+        VARCHAR(10) flight_no "NOT NULL"
+        TIMESTAMPTZ departure_at "NOT NULL"
+        TIMESTAMPTZ arrival_at "NOT NULL"
+        VARCHAR(30) aircraft "NOT NULL"
+        INTEGER total_seats "NOT NULL"
+        NUMERIC(12,2) base_fare "NOT NULL"
+        VARCHAR(20) status "NOT NULL"
+    }
+    bookings {
+        INTEGER booking_id PK "NOT NULL"
+        VARCHAR(20) booking_ref UK "NOT NULL"
+        INTEGER customer_id FK "NOT NULL"
+        VARCHAR(30) coupon_code FK "NULL"
+        VARCHAR(10) booking_type "NOT NULL"
+        TIMESTAMPTZ booked_at "NOT NULL"
+        NUMERIC(12,2) total_amount "NOT NULL"
+        NUMERIC(12,2) discount "NOT NULL, DEFAULT 0"
+        VARCHAR(20) payment_method "NOT NULL"
+        VARCHAR(20) status "NOT NULL"
+        TIMESTAMPTZ cancelled_at "NULL"
+        NUMERIC(12,2) refund_amount "NULL"
+    }
+    flight_bookings {
+        INTEGER booking_id PK, FK "NOT NULL"
+        INTEGER flight_id FK "NOT NULL"
+        VARCHAR(20) cabin "NOT NULL"
+        SMALLINT passengers "NOT NULL"
+        NUMERIC(12,2) fare_paid "NOT NULL"
+    }
+    passengers {
+        INTEGER booking_id PK, FK "NOT NULL, part of composite PK"
+        SMALLINT seq_no PK "NOT NULL, part of composite PK"
+        VARCHAR(150) full_name "NOT NULL"
+        SMALLINT age "NOT NULL"
+        CHAR(1) gender "NOT NULL"
+        VARCHAR(5) seat_no "NULL"
+    }
+    hotels {
+        INTEGER hotel_id PK "NOT NULL"
+        VARCHAR(200) hotel_name "NOT NULL"
+        VARCHAR(100) city_name "NOT NULL"
+        SMALLINT star_rating "NOT NULL"
+        NUMERIC(2,1) user_rating "NULL"
+        JSONB amenities "NOT NULL"
+        TIME check_in_time "NOT NULL"
+        TIME check_out_time "NOT NULL"
+    }
+    room_types {
+        INTEGER room_type_id PK "NOT NULL"
+        INTEGER hotel_id FK "NOT NULL, UNIQUE together with room_type_id"
+        VARCHAR(100) room_name "NOT NULL"
+        SMALLINT max_guests "NOT NULL"
+        NUMERIC(12,2) price_per_night "NOT NULL"
+        INTEGER total_rooms "NOT NULL"
+    }
+    hotel_bookings {
+        INTEGER booking_id PK, FK "NOT NULL"
+        INTEGER hotel_id FK "NOT NULL, composite FK (with room_type_id)"
+        INTEGER room_type_id FK "NOT NULL, composite FK (with hotel_id)"
+        DATE check_in "NOT NULL"
+        DATE check_out "NOT NULL"
+        SMALLINT rooms "NOT NULL"
+        SMALLINT guests "NOT NULL"
+        VARCHAR(20) room_number "NULL"
+    }
+    hotel_reviews {
+        INTEGER review_id PK "NOT NULL"
+        INTEGER booking_id FK, UK "NOT NULL, UNIQUE"
+        INTEGER hotel_id FK "NOT NULL, redundant (derivable from booking)"
+        SMALLINT rating "NOT NULL"
+        VARCHAR(200) title "NOT NULL"
+        TEXT review_text "NULL"
+        TIMESTAMPTZ created_at "NOT NULL"
+    }
