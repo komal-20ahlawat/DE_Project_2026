@@ -1,29 +1,27 @@
 {
   "team_number": "T0051",
-  "team": [
+  "group_lead": {
+    "name": "Arnav Jindal",
+    "enrollment_no": "2501010651",
+    "github": "arnavjindal2008"
+  },
+  "members": [
     {
-      "role": "Group Lead",
-      "name": "Arnav Jindal",
-      "enrollment_no": "2501010651",
-      "github_username": "arnavjindal2008"
-    },
-    {
-      "role": "Member 2",
-      "name": "Vanshika Mittal",
+      "name": "Vanshika",
       "enrollment_no": "2501010497",
-      "github_username": "vanshika022007"
+      "github": "vanshika022007"
     },
     {
-      "role": "Member 3",
-      "name": "Komal Ahlawat",
+      "name": "Komal",
       "enrollment_no": "2501010227",
-      "github_username": "komal-20ahlawat"
+      "github": "komal-20ahlawat"
     },
     {
-      "role": "Member 4",
       "name": "Ojal Akash",
       "enrollment_no": "2501010311",
-      "github_username": "ojalakash-07"
+      "github": "ojalakash-07"
     }
-  ]
+  ],
+  "postgres_version": "18.6",
+  "laptop_used_for_benchmarks": "MacBook Pro M4"
 }

@@ -23,8 +23,8 @@
 | Role | Name | Enrollment No. | GitHub Username |
 |------|------|----------------|-----------------|
 | Group Lead | Arnav Jindal | 2501010651 | arnavjindal2008 |
-| Member 2 | Vanshika Mittal | 2501010497 | vanshika022007 |
-| Member 3 | Komal Ahlawat | 2501010227 | komal-20ahlawat |
+| Member 2 | Vanshika | 2501010497 | vanshika022007 |
+| Member 3 | Komal | 2501010227 | komal-20ahlawat |
 | Member 4 | Ojal Akash | 2501010311 | ojalakash-07 |
 
 **Team No.:** T0051 · **Section:** B · **Repository URL:** https://github.com/edusatyaki/DBMS-MakeMyTrip-Travel-Booking.git
