@@ -1,343 +1,711 @@
-# Schema Design — MakeMyTrip Travel Booking Database
+# Schema Design: MakeMyTrip Travel Booking Database
 
-**Database:** PostgreSQL 15+  
-**Schema:** `mmt`  
-**Checkpoint:** CP1 — Schema & Normalization
+**Team:** T0051 · Section B · **Database:** PostgreSQL 15+ (verified on PostgreSQL 16) · **Schema:** `mmt`
+**Phase 2 deliverable:** data dictionary, ER diagram, functional dependencies and normal forms, integrity-check results, data problems found.
 
-## 1. Design overview
+**Contents:** 1 Overview · 2 ER diagram · 3 Relationships and cardinalities · 4 Data dictionary · 5 NULL vs NOT NULL · 6 UNIQUE constraints · 7 CHECK constraints · 8 Indexes that exist · 9 Functional dependencies and normal forms · 10 Derived and redundant columns · 11 Load and integrity checks · 12 Data problems found
 
-The database stores MakeMyTrip's flight and hotel booking activity. The design separates reference data (airports, airlines, hotels, room types, coupons and customers), operational data (flights and bookings), booking-specific details (flight bookings, passengers and hotel bookings), and customer feedback (hotel reviews).
+---
 
-The schema contains all 12 source tables. Each table name and column name follows the supplied CSV file and header. Primary keys identify rows, foreign keys preserve relationships, and `NOT NULL`, `UNIQUE` and `CHECK` constraints enforce the rules that can be checked within an individual row or table.
+## 1. Overview
 
-All tables are created in the `mmt` schema. No manually created performance indexes are included in this checkpoint. PostgreSQL automatically creates indexes for primary-key and unique constraints; those are the only indexes expected from this DDL.
+We worked out 12 tables from the 12 seed CSV files and created them in the schema `mmt` (`CREATE SCHEMA mmt; SET search_path TO mmt;`). Table names and column names are identical to the CSV file names and headers, so the 30 workload queries run unchanged (all 25 reads and 5 writes were run against this schema without error).
 
-## 2. Tables, keys and relationships
-
-| Table | Primary key | Foreign keys | Purpose and relationship |
-|---|---|---|---|
-| `airports` | `iata_code` | — | Airport reference data. One airport can be the origin of many flights and the destination of many flights. |
-| `airlines` | `airline_code` | — | Airline reference data. One airline operates many flights. |
-| `customers` | `customer_id` | — | Customer details. One customer can make many bookings. |
-| `coupons` | `coupon_code` | — | Coupon definitions. One coupon can be referenced by many bookings; a booking may have no coupon. |
-| `flights` | `flight_id` | `airline_code` → `airlines`; `origin` and `destination` → `airports` | A dated flight instance. Each flight belongs to one airline and has one origin and one destination. |
-| `hotels` | `hotel_id` | — | Hotel details, ratings, amenities and check-in/check-out times. One hotel has many room types and hotel bookings. |
-| `room_types` | `room_type_id` | `hotel_id` → `hotels` | Room categories belonging to a hotel. A hotel can have many room types. `(hotel_id, room_type_id)` is also unique so hotel bookings can enforce that the selected room type belongs to the selected hotel. |
-| `bookings` | `booking_id` | `customer_id` → `customers`; `coupon_code` → `coupons` | Common booking information for both flight and hotel bookings. Each booking belongs to one customer and may use one coupon. |
-| `flight_bookings` | `booking_id` | `booking_id` → `bookings`; `flight_id` → `flights` | Flight-specific details for a booking. The shared primary/foreign key makes the relationship with `bookings` one-to-zero-or-one. |
-| `passengers` | (`booking_id`, `seq_no`) | `booking_id` → `flight_bookings` | One row per passenger in a flight booking. A flight booking can have multiple passengers. |
-| `hotel_bookings` | `booking_id` | `booking_id` → `bookings`; `hotel_id` → `hotels`; (`hotel_id`, `room_type_id`) → `room_types` | Hotel stay details. Each hotel booking refers to one hotel and one room type belonging to that hotel. |
-| `hotel_reviews` | `review_id` | `booking_id` → `hotel_bookings`; `hotel_id` → `hotels` | Review of a hotel stay. `booking_id` is also unique, so at most one review is stored for a hotel booking. |
-
-### Relationship cardinalities
-
-- `airlines` 1 : N `flights`.
-- `airports` 1 : N `flights` through the separate `origin` and `destination` foreign keys.
-- `customers` 1 : N `bookings`.
-- `coupons` 1 : N `bookings`; each booking uses zero or one coupon.
-- `hotels` 1 : N `room_types`.
-- `bookings` 1 : 0..1 `flight_bookings`, and 1 : 0..1 `hotel_bookings`.
-- `flights` 1 : N `flight_bookings`.
-- `flight_bookings` 1 : N `passengers`.
-- `hotels` 1 : N `hotel_bookings`.
-- `room_types` 1 : N `hotel_bookings` (with the composite hotel/room-type reference).
-- `hotel_bookings` 1 : 0..1 `hotel_reviews`; `hotels` 1 : N `hotel_reviews`.
-
-A booking is intended to be either a flight booking or a hotel booking, not both. The supplied rows satisfy this rule. However, a normal `CHECK` constraint cannot inspect the other subtype table, so the current DDL does not independently enforce subtype exclusivity or subtype completeness. Those conditions are checked as cross-table integrity queries after loading. A trigger or a different modelling approach would be needed to enforce them automatically in the database.
-
-## 3. Data dictionary and constraint rationale
-
-The following tables describe the column types and the important constraints in `01_schema.sql`. `PK` means primary key, `FK` means foreign key, `UQ` means unique, `NN` means not null, and `CK` means check constraint.
-
-### 3.1 `airports`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `iata_code` | `VARCHAR(3)` | PK, CK `^[A-Z]{3}$` | Three-letter uppercase airport identifier. |
-| `airport_name` | `VARCHAR(150)` | NN | Airport name is required. |
-| `city_name` | `VARCHAR(100)` | NN | City is required for airport location. |
-| `country_code` | `CHAR(2)` | NN, CK `^[A-Z]{2}$` | Two-letter uppercase country code. |
-
-### 3.2 `airlines`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `airline_code` | `VARCHAR(3)` | PK, CK `^[A-Z0-9]{2,3}$` | Short airline code; supports letters and digits. |
-| `airline_name` | `VARCHAR(100)` | NN, UQ | Airline name is required and is kept unique in this dataset/schema. |
-
-### 3.3 `customers`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `customer_id` | `INTEGER` | PK | Numeric customer identifier. |
-| `full_name` | `VARCHAR(150)` | NN | Customer name is required. |
-| `email` | `VARCHAR(255)` | NN, UQ, CK email-format pattern | Email is required and unique; the check rejects a basic malformed address. |
-| `phone` | `VARCHAR(20)` | NN, UQ | Stored as text to preserve phone formatting and leading zeroes if present. |
-| `loyalty_tier` | `VARCHAR(20)` | NN, CK in `BLUE`, `SILVER`, `GOLD`, `PLATINUM` | Restricts the tier to the values represented by the data. |
-| `created_at` | `TIMESTAMPTZ` | NN | Customer creation time includes a UTC offset in the CSV. |
-
-### 3.4 `coupons`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `coupon_code` | `VARCHAR(30)` | PK | Coupon identifier. |
-| `applies_to` | `VARCHAR(10)` | NN, CK in `ALL`, `FLIGHT`, `HOTEL` | Defines which booking category can use the coupon. |
-| `discount_pct` | `NUMERIC(5,2)` | NN, CK greater than 0 and at most 100 | Percentage requires a decimal-capable numeric type and a valid range. |
-| `max_discount` | `NUMERIC(12,2)` | NN, CK greater than 0 | Monetary cap; decimal precision is required. |
-| `valid_from` | `DATE` | NN | Start of the validity period. |
-| `valid_to` | `DATE` | NN, CK `valid_to >= valid_from` | End date cannot precede the start date. |
-
-### 3.5 `flights`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `flight_id` | `INTEGER` | PK | Unique dated-flight identifier. |
-| `airline_code` | `VARCHAR(3)` | NN, FK → `airlines.airline_code`, delete RESTRICT | Every flight must reference an existing airline; an airline in use should not be deleted. |
-| `flight_no` | `VARCHAR(10)` | NN, CK `^[A-Z0-9]{2,3}-[0-9]{3}$` | Flight number format observed in the seed data. |
-| `origin` | `VARCHAR(3)` | NN, FK → `airports.iata_code`, delete RESTRICT | Origin must be a known airport. |
-| `destination` | `VARCHAR(3)` | NN, FK → `airports.iata_code`, delete RESTRICT | Destination must be a known airport. |
-| `departure_at` | `TIMESTAMPTZ` | NN | Scheduled departure includes a time-zone offset. |
-| `arrival_at` | `TIMESTAMPTZ` | NN, CK later than departure | Arrival must be after departure. |
-| `aircraft` | `VARCHAR(30)` | NN | Aircraft/model label. |
-| `total_seats` | `INTEGER` | NN, CK greater than 0 | A flight must have a positive seat capacity. |
-| `base_fare` | `NUMERIC(12,2)` | NN, CK greater than 0 | Fare is monetary and must be positive. |
-| `status` | `VARCHAR(20)` | NN, CK in `SCHEDULED`, `DELAYED`, `DEPARTED`, `LANDED`, `CANCELLED` | Restricts flight state to the supported values. |
-
-### 3.6 `hotels`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `hotel_id` | `INTEGER` | PK | Unique hotel identifier. |
-| `hotel_name` | `VARCHAR(200)` | NN | Hotel name is required. |
-| `city_name` | `VARCHAR(100)` | NN | City is used for hotel search and reporting. |
-| `star_rating` | `SMALLINT` | NN, CK 1–5 | Small integer is suitable for a 1-to-5 rating. |
-| `user_rating` | `NUMERIC(2,1)` | Nullable, CK NULL or 1–5 | Some hotels have no user rating; decimal rating is allowed. |
-| `amenities` | `JSONB` | NN, CK JSON type is `object` | Amenities are represented as a JSON object of amenity names and boolean values (for example, `pool`, `wifi`, `breakfast`). JSONB preserves this semi-structured set. |
-| `check_in_time` | `TIME` | NN | Local hotel check-in time, without a date. |
-| `check_out_time` | `TIME` | NN | Local hotel check-out time, without a date. |
-
-### 3.7 `room_types`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `room_type_id` | `INTEGER` | PK | Unique room-type identifier. |
-| `hotel_id` | `INTEGER` | NN, FK → `hotels.hotel_id`, delete RESTRICT | Every room type belongs to an existing hotel. |
-| `room_name` | `VARCHAR(100)` | NN | Room category name. |
-| `max_guests` | `SMALLINT` | NN, CK greater than 0 | Maximum guest capacity must be positive. |
-| `price_per_night` | `NUMERIC(12,2)` | NN, CK greater than 0 | Nightly price is monetary and positive. |
-| `total_rooms` | `INTEGER` | NN, CK greater than 0 | Number of rooms available for this type must be positive. |
-
-`UNIQUE (hotel_id, room_type_id)` supports the composite foreign key from `hotel_bookings`. Since `room_type_id` is already the primary key, this pair is logically unique as well; the additional unique constraint is present to make the composite referenced key explicit.
-
-### 3.8 `bookings`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `booking_id` | `INTEGER` | PK | Unique booking identifier. |
-| `booking_ref` | `VARCHAR(20)` | NN, UQ, CK `^[A-Z0-9]{8}$` | Customer-facing reference; unique and follows the seed format. |
-| `customer_id` | `INTEGER` | NN, FK → `customers.customer_id`, delete RESTRICT | Every booking belongs to a customer; retain customer history. |
-| `booking_type` | `VARCHAR(10)` | NN, CK `FLIGHT` or `HOTEL` | Identifies the product booked. |
-| `booked_at` | `TIMESTAMPTZ` | NN | Booking creation timestamp includes an offset. |
-| `total_amount` | `NUMERIC(12,2)` | NN, CK greater than 0 | Booking amount is monetary and positive. |
-| `coupon_code` | `VARCHAR(30)` | Nullable, FK → `coupons.coupon_code`, delete RESTRICT | A booking may not use a coupon; referenced coupons should not be deleted. |
-| `discount` | `NUMERIC(12,2)` | NN, default 0, CK between 0 and `total_amount` | Monetary discount; zero is the default when no discount is applied. |
-| `payment_method` | `VARCHAR(20)` | NN, CK in `CARD`, `EMI`, `NETBANKING`, `UPI`, `WALLET` | Restricts payment method to the values in the dataset. |
-| `status` | `VARCHAR(20)` | NN, CK in `PENDING_PAYMENT`, `CONFIRMED`, `COMPLETED`, `CANCELLED` | Restricts booking state. |
-| `cancelled_at` | `TIMESTAMPTZ` | Nullable; paired with cancellation check | Only cancelled bookings have a cancellation timestamp in the seed data. |
-| `refund_amount` | `NUMERIC(12,2)` | Nullable; paired with cancellation check and refund range check | Refund is absent for non-cancelled bookings; when present it must be between zero and the booking amount. |
-
-The cancellation check requires both `cancelled_at` and `refund_amount` for a `CANCELLED` booking, and requires both to be NULL for a non-cancelled booking. The coupon/discount check prevents a non-zero discount when `coupon_code` is NULL.
-
-### 3.9 `flight_bookings`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `booking_id` | `INTEGER` | PK, FK → `bookings.booking_id`, delete CASCADE | Shared key identifies the flight-specific extension of a booking. Deleting its parent booking removes its detail row. |
-| `flight_id` | `INTEGER` | NN, FK → `flights.flight_id`, delete RESTRICT | Every flight booking refers to an existing flight; a booked flight should not be deleted. |
-| `cabin` | `VARCHAR(20)` | NN, CK in `ECONOMY`, `PREMIUM`, `BUSINESS` | Restricts cabin category. |
-| `passengers` | `SMALLINT` | NN, CK greater than 0 | Number of passengers must be positive. |
-| `fare_paid` | `NUMERIC(12,2)` | NN, CK greater than 0 | Actual fare paid for the flight booking is monetary and positive. |
-
-### 3.10 `passengers`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `booking_id` | `INTEGER` | Part of PK, FK → `flight_bookings.booking_id`, delete CASCADE | Passenger belongs to a flight booking; remove passenger rows if the parent flight booking is deleted. |
-| `seq_no` | `SMALLINT` | Part of PK, CK greater than 0 | Passenger sequence is unique within a booking and starts above zero. |
-| `full_name` | `VARCHAR(150)` | NN | Passenger name is required. |
-| `age` | `SMALLINT` | NN, CK at least 0 | Age is a non-negative whole number. |
-| `gender` | `CHAR(1)` | NN, CK in `M`, `F`, `X` | Stores one of the gender codes present in the data. |
-| `seat_no` | `VARCHAR(5)` | Nullable, CK NULL or `^[0-9]{1,2}[A-F]$` | Seat may be unassigned before web check-in; assigned seats follow the observed format. |
-
-The composite primary key `(booking_id, seq_no)` allows multiple passenger rows per booking while preventing duplicate sequence numbers within the same booking.
-
-### 3.11 `hotel_bookings`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `booking_id` | `INTEGER` | PK, FK → `bookings.booking_id`, delete CASCADE | Shared key identifies the hotel-specific extension of a booking. |
-| `hotel_id` | `INTEGER` | NN, FK → `hotels.hotel_id`, delete RESTRICT | The stay must refer to an existing hotel. |
-| `room_type_id` | `INTEGER` | NN, composite FK with `hotel_id` → `room_types(hotel_id, room_type_id)`, delete RESTRICT | Ensures the selected room type belongs to the selected hotel. |
-| `check_in` | `DATE` | NN | Stay start date. |
-| `check_out` | `DATE` | NN, CK later than `check_in` | A stay must have at least one night. |
-| `rooms` | `SMALLINT` | NN, CK greater than 0 | At least one room is booked. |
-| `guests` | `SMALLINT` | NN, CK greater than 0 | At least one guest is included. |
-| `room_number` | `VARCHAR(20)` | Nullable | Room assignment may be pending until check-in; text type accommodates room labels without treating them as numbers. |
-
-### 3.12 `hotel_reviews`
-
-| Column | PostgreSQL type | Constraint | Reason |
-|---|---|---|---|
-| `review_id` | `INTEGER` | PK | Unique review identifier. |
-| `booking_id` | `INTEGER` | NN, UQ, FK → `hotel_bookings.booking_id`, delete CASCADE | Review must belong to a hotel booking; unique allows at most one review per booking. |
-| `hotel_id` | `INTEGER` | NN, FK → `hotels.hotel_id`, delete RESTRICT | Identifies the reviewed hotel. |
-| `rating` | `SMALLINT` | NN, CK 1–5 | Review rating must be within the five-point scale. |
-| `title` | `VARCHAR(200)` | NN | Review title is required. |
-| `review_text` | `TEXT` | Nullable | Some reviews have a title and rating but no written text. |
-| `created_at` | `TIMESTAMPTZ` | NN | Review creation time includes an offset. |
-
-## 4. NULL values in the seed data
-
-The CSV inspection found NULL values in the following columns. These are treated as meaningful optional values rather than being replaced with arbitrary defaults.
-
-| Table.column | NULL rows | Interpretation and schema decision |
-|---|---:|---|
-| `bookings.coupon_code` | 127,144 | Booking did not use a coupon; nullable foreign key. |
-| `bookings.cancelled_at` | 133,298 | Booking is not cancelled; nullable and checked against `status`. |
-| `bookings.refund_amount` | 133,298 | Booking is not cancelled; nullable and checked against `status`. |
-| `hotels.user_rating` | 134 | No user rating is available for some hotels; nullable. |
-| `passengers.seat_no` | 21,612 | Seat has not yet been assigned; nullable. |
-| `hotel_bookings.room_number` | 6,815 | Room number has not yet been assigned; nullable. |
-| `hotel_reviews.review_text` | 4,812 | Review has no written comment; nullable. |
-
-All other columns in the 12 CSV files had no missing values in the inspected seed data. The DDL marks those columns `NOT NULL`.
-
-## 5. Functional dependencies and normal forms
-
-The following functional dependencies (FDs) are based on the declared keys and the meaning of the attributes. Each relation has a single-valued attribute set for each key. The schema is designed to satisfy 3NF; the listed key-based dependencies also satisfy BCNF for these relations.
-
-| Table | Main functional dependency | Normal-form reasoning |
+| Group | Tables | Role |
 |---|---|---|
-| `airports` | `iata_code → airport_name, city_name, country_code` | The airport code determines all non-key attributes; no partial dependency. BCNF. |
-| `airlines` | `airline_code → airline_name`; `airline_name → airline_code` under the declared UQ rule | Both determinants are candidate keys in this schema. BCNF. |
-| `customers` | `customer_id → full_name, email, phone, loyalty_tier, created_at`; `email → customer_id`; `phone → customer_id` under the UQ constraints | Each declared determinant is a candidate key. BCNF. |
-| `coupons` | `coupon_code → applies_to, discount_pct, max_discount, valid_from, valid_to` | Coupon code determines the coupon attributes. BCNF. |
-| `flights` | `flight_id → airline_code, flight_no, origin, destination, departure_at, arrival_at, aircraft, total_seats, base_fare, status` | Flight ID determines the dated flight instance. BCNF under the declared key. |
-| `hotels` | `hotel_id → hotel_name, city_name, star_rating, user_rating, amenities, check_in_time, check_out_time` | Hotel ID determines hotel attributes. BCNF. |
-| `room_types` | `room_type_id → hotel_id, room_name, max_guests, price_per_night, total_rooms` | Room type ID determines the room-type row. The declared `(hotel_id, room_type_id)` unique key is a superkey as well. BCNF. |
-| `bookings` | `booking_id → booking_ref, customer_id, booking_type, booked_at, total_amount, coupon_code, discount, payment_method, status, cancelled_at, refund_amount`; `booking_ref → booking_id` | Booking ID and booking reference are candidate keys. BCNF. |
-| `flight_bookings` | `booking_id → flight_id, cabin, passengers, fare_paid` | Booking ID is the primary key and determines flight-specific attributes. BCNF. |
-| `passengers` | `(booking_id, seq_no) → full_name, age, gender, seat_no` | Non-key attributes depend on the whole composite key. BCNF. |
-| `hotel_bookings` | `booking_id → hotel_id, room_type_id, check_in, check_out, rooms, guests, room_number` | Booking ID determines the stay details. BCNF under the declared key. |
-| `hotel_reviews` | `review_id → booking_id, hotel_id, rating, title, review_text, created_at`; `booking_id → review_id, hotel_id, rating, title, review_text, created_at` because `booking_id` is unique | Both determinants are candidate keys under the declared constraints. BCNF. |
+| Reference data | `airports`, `airlines`, `coupons`, `hotels`, `room_types`, `customers` | Rarely change; referenced by other tables |
+| Flights | `flights` | A *dated* flight: one row per flight number per day |
+| Booking supertype | `bookings` | Data common to every booking |
+| Booking subtypes | `flight_bookings`, `hotel_bookings`, `passengers` | Flight- or hotel-specific details; they share the key of `bookings` |
+| Feedback | `hotel_reviews` | At most one review per hotel stay |
 
-### Redundant or derived attributes
+`01_schema.sql` contains only constraints (PK, FK, UNIQUE, NOT NULL, CHECK) and no other index, as Phase 2 requires.
 
-1. **`flight_bookings.passengers` and rows in `passengers`:** the passenger count can be derived by counting passenger rows for a booking. The count is retained because it is part of the supplied flight-booking export and is used directly by the given workload. The seed data check found that the stored count equals the number of passenger rows for every flight booking. If passenger rows are changed later, the count must be kept consistent (for example, by application logic or a trigger).
-2. **`flight_bookings.fare_paid` versus `bookings.total_amount` and `bookings.discount`:** these values are related but are not interchangeable. `fare_paid` is the flight-specific fare amount, while `total_amount` and `discount` are stored at the overall booking level. The inspected data does not establish a universal equality: approximately 88.1% of flight rows have `fare_paid = total_amount - discount` to the cent, so the columns should not be collapsed based on that assumption. Retaining `fare_paid` preserves the source value and supports flight-specific analysis.
-3. **`hotel_reviews.hotel_id` versus `hotel_bookings.hotel_id`:** the hotel can be obtained by joining the review's `booking_id` to `hotel_bookings`. The `hotel_id` in `hotel_reviews` is therefore redundant in principle, but it is retained because it exists in the source CSV and is used by the supplied review queries. The inspected data had no mismatch between these two hotel IDs. Since a normal foreign key cannot enforce equality across the two paths, a trigger or integrity query is needed to prevent future inconsistencies.
-4. **`room_types.hotel_id` and `room_type_id`:** `room_type_id` is already the primary key, so `hotel_id` is functionally determined by it. The composite unique constraint is included to support the composite foreign key that verifies a hotel booking's room type belongs to the same hotel.
-5. **`bookings.booking_type` and subtype tables:** the booking type is repeated conceptually by the existence of a row in either `flight_bookings` or `hotel_bookings`. It is retained because it is part of the source booking record and is used by queries. Cross-table checks verify that the type and subtype agree.
+---
 
-## 6. Delete rules
+## 2. ER diagram
 
-- **`RESTRICT` for reference/master data:** airlines, airports, customers, coupons, flights, hotels and room types cannot be deleted while referenced by operational records. This protects booking and travel history from accidental deletion.
-- **`CASCADE` for dependent detail rows:** deleting a booking removes its flight or hotel detail row; deleting a flight-booking detail removes its passenger rows; deleting a hotel booking removes its review. These rows have no independent meaning without their parent booking/detail.
-- The `hotel_reviews.hotel_id` reference uses `RESTRICT`, preserving the hotel record while reviews refer to it.
+![ER diagram](../diagrams/er_diagram.png)
 
-## 7. CHECK constraints implemented
+Mermaid source of the same model:
 
-The DDL includes more than 12 named `CHECK` constraints. They validate formats, allowed values, numeric ranges and date/time relationships.
+```mermaid
+erDiagram
+    %% Booking subtype rule: each booking is expected to have exactly one subtype (flight_bookings or hotel_bookings).
+    %% This is validated through data integrity checks; it is NOT enforced by the current DDL constraints.
+    %% Composite FK: hotel_bookings(hotel_id, room_type_id) -> room_types(hotel_id, room_type_id).
 
-| Constraint | Rule |
+    airports ||--o{ flights : "1:N is the origin of (origin, ON DELETE RESTRICT)"
+    airports ||--o{ flights : "1:N is the destination of (destination, ON DELETE RESTRICT)"
+    airlines ||--o{ flights : "1:N operates (airline_code, ON DELETE RESTRICT)"
+    customers ||--o{ bookings : "1:N makes (customer_id, ON DELETE RESTRICT)"
+    coupons |o--o{ bookings : "1:N is applied to (optional) (coupon_code, ON DELETE RESTRICT)"
+    bookings ||--o| flight_bookings : "1:1 has flight details (type FLIGHT) (booking_id, ON DELETE CASCADE)"
+    bookings ||--o| hotel_bookings : "1:1 has stay details (type HOTEL) (booking_id, ON DELETE CASCADE)"
+    flights ||--o{ flight_bookings : "1:N is booked in (flight_id, ON DELETE RESTRICT)"
+    flight_bookings ||--o{ passengers : "1:N has passengers (booking_id, ON DELETE CASCADE)"
+    hotels ||--o{ room_types : "1:N has room types (hotel_id, ON DELETE RESTRICT)"
+    hotels ||--o{ hotel_bookings : "1:N is booked in (hotel_id, ON DELETE RESTRICT)"
+    room_types ||--o{ hotel_bookings : "1:N is booked in (composite FK: hotel_id + room_type_id) (hotel_id, room_type_id, ON DELETE RESTRICT)"
+    hotels ||--o{ hotel_reviews : "1:N receives (hotel_id is redundant) (hotel_id, ON DELETE RESTRICT)"
+    hotel_bookings ||--o| hotel_reviews : "1:1 may be reviewed (optional) (booking_id, UNIQUE, ON DELETE CASCADE)"
+
+    airports {
+        VARCHAR(3) iata_code PK "NOT NULL"
+        VARCHAR(150) airport_name "NOT NULL"
+        VARCHAR(100) city_name "NOT NULL"
+        CHAR(2) country_code "NOT NULL"
+    }
+    airlines {
+        VARCHAR(3) airline_code PK "NOT NULL"
+        VARCHAR(100) airline_name UK "NOT NULL"
+    }
+    customers {
+        INTEGER customer_id PK "NOT NULL"
+        VARCHAR(150) full_name "NOT NULL"
+        VARCHAR(255) email UK "NOT NULL"
+        VARCHAR(20) phone UK "NOT NULL"
+        VARCHAR(20) loyalty_tier "NOT NULL"
+        TIMESTAMPTZ created_at "NOT NULL"
+    }
+    coupons {
+        VARCHAR(30) coupon_code PK "NOT NULL"
+        VARCHAR(10) applies_to "NOT NULL"
+        NUMERIC(5,2) discount_pct "NOT NULL"
+        NUMERIC(12,2) max_discount "NOT NULL"
+        DATE valid_from "NOT NULL"
+        DATE valid_to "NOT NULL"
+    }
+    flights {
+        INTEGER flight_id PK "NOT NULL"
+        VARCHAR(3) airline_code FK "NOT NULL"
+        VARCHAR(3) origin FK "NOT NULL"
+        VARCHAR(3) destination FK "NOT NULL"
+        VARCHAR(10) flight_no "NOT NULL"
+        TIMESTAMPTZ departure_at "NOT NULL"
+        TIMESTAMPTZ arrival_at "NOT NULL"
+        VARCHAR(30) aircraft "NOT NULL"
+        INTEGER total_seats "NOT NULL"
+        NUMERIC(12,2) base_fare "NOT NULL"
+        VARCHAR(20) status "NOT NULL"
+    }
+    bookings {
+        INTEGER booking_id PK "NOT NULL"
+        VARCHAR(20) booking_ref UK "NOT NULL"
+        INTEGER customer_id FK "NOT NULL"
+        VARCHAR(30) coupon_code FK "NULL"
+        VARCHAR(10) booking_type "NOT NULL"
+        TIMESTAMPTZ booked_at "NOT NULL"
+        NUMERIC(12,2) total_amount "NOT NULL"
+        NUMERIC(12,2) discount "NOT NULL, DEFAULT 0"
+        VARCHAR(20) payment_method "NOT NULL"
+        VARCHAR(20) status "NOT NULL"
+        TIMESTAMPTZ cancelled_at "NULL"
+        NUMERIC(12,2) refund_amount "NULL"
+    }
+    flight_bookings {
+        INTEGER booking_id PK, FK "NOT NULL"
+        INTEGER flight_id FK "NOT NULL"
+        VARCHAR(20) cabin "NOT NULL"
+        SMALLINT passengers "NOT NULL"
+        NUMERIC(12,2) fare_paid "NOT NULL"
+    }
+    passengers {
+        INTEGER booking_id PK, FK "NOT NULL, part of composite PK"
+        SMALLINT seq_no PK "NOT NULL, part of composite PK"
+        VARCHAR(150) full_name "NOT NULL"
+        SMALLINT age "NOT NULL"
+        CHAR(1) gender "NOT NULL"
+        VARCHAR(5) seat_no "NULL"
+    }
+    hotels {
+        INTEGER hotel_id PK "NOT NULL"
+        VARCHAR(200) hotel_name "NOT NULL"
+        VARCHAR(100) city_name "NOT NULL"
+        SMALLINT star_rating "NOT NULL"
+        NUMERIC(2,1) user_rating "NULL"
+        JSONB amenities "NOT NULL"
+        TIME check_in_time "NOT NULL"
+        TIME check_out_time "NOT NULL"
+    }
+    room_types {
+        INTEGER room_type_id PK "NOT NULL"
+        INTEGER hotel_id FK "NOT NULL, UNIQUE together with room_type_id"
+        VARCHAR(100) room_name "NOT NULL"
+        SMALLINT max_guests "NOT NULL"
+        NUMERIC(12,2) price_per_night "NOT NULL"
+        INTEGER total_rooms "NOT NULL"
+    }
+    hotel_bookings {
+        INTEGER booking_id PK, FK "NOT NULL"
+        INTEGER hotel_id FK "NOT NULL, composite FK (with room_type_id)"
+        INTEGER room_type_id FK "NOT NULL, composite FK (with hotel_id)"
+        DATE check_in "NOT NULL"
+        DATE check_out "NOT NULL"
+        SMALLINT rooms "NOT NULL"
+        SMALLINT guests "NOT NULL"
+        VARCHAR(20) room_number "NULL"
+    }
+    hotel_reviews {
+        INTEGER review_id PK "NOT NULL"
+        INTEGER booking_id FK, UK "NOT NULL, UNIQUE"
+        INTEGER hotel_id FK "NOT NULL, redundant (derivable from booking)"
+        SMALLINT rating "NOT NULL"
+        VARCHAR(200) title "NOT NULL"
+        TEXT review_text "NULL"
+        TIMESTAMPTZ created_at "NOT NULL"
+    }
+```
+
+Reading the notation: `||` exactly one · `o|` zero or one · `o{` zero or many · `|{` one or many.
+
+---
+
+## 3. Relationships and cardinalities
+
+| # | Parent (one side) | Child (many side) | Cardinality | Implemented by | ON DELETE | Why |
+|---|---|---|:---:|---|---|---|
+| 1 | `airports` | `flights` (origin) | 1 : N | `flights.origin` → `airports.iata_code` | RESTRICT | Reference data; a flight must not lose its airport. |
+| 2 | `airports` | `flights` (destination) | 1 : N | `flights.destination` → `airports.iata_code` | RESTRICT | Same as above. |
+| 3 | `airlines` | `flights` | 1 : N | `flights.airline_code` → `airlines.airline_code` | RESTRICT | Same as above. |
+| 4 | `customers` | `bookings` | 1 : N | `bookings.customer_id` → `customers.customer_id` | RESTRICT | Bookings are financial history and must never be destroyed by deleting a customer. |
+| 5 | `coupons` | `bookings` | 1 : N (optional) | `bookings.coupon_code` → `coupons.coupon_code` (nullable) | RESTRICT | SET NULL would silently erase why a discount was given. |
+| 6 | `bookings` | `flight_bookings` | 1 : 0..1 | shared key: `flight_bookings.booking_id` is PK and FK | CASCADE | The detail row has no meaning without its booking. |
+| 7 | `bookings` | `hotel_bookings` | 1 : 0..1 | shared key: `hotel_bookings.booking_id` is PK and FK | CASCADE | Same as above. |
+| 8 | `flights` | `flight_bookings` | 1 : N | `flight_bookings.flight_id` → `flights.flight_id` | RESTRICT | A flight that has bookings must not be deletable. |
+| 9 | `flight_bookings` | `passengers` | 1 : N (≥ 1) | `passengers.booking_id` → `flight_bookings.booking_id` | CASCADE | A passenger has no meaning without the booking. |
+| 10 | `hotels` | `room_types` | 1 : N | `room_types.hotel_id` → `hotels.hotel_id` | RESTRICT | Hotels are reference data. |
+| 11 | `hotels` | `hotel_bookings` | 1 : N | `hotel_bookings.hotel_id` → `hotels.hotel_id` | RESTRICT | Booking history must survive. |
+| 12 | `room_types` | `hotel_bookings` | 1 : N | composite FK `(hotel_id, room_type_id)` → `room_types(hotel_id, room_type_id)` | RESTRICT | Booking history must survive; the composite key also forces the room type to belong to the booked hotel. |
+| 13 | `hotel_bookings` | `hotel_reviews` | 1 : 0..1 | `hotel_reviews.booking_id` FK + UNIQUE | CASCADE | A review has no meaning without its stay. |
+| 14 | `hotels` | `hotel_reviews` | 1 : N | `hotel_reviews.hotel_id` → `hotels.hotel_id` | RESTRICT | Reviews are history; the column is redundant (section 10). |
+
+SET NULL is not used. The only optional foreign key is `bookings.coupon_code` and it is RESTRICT for the reason in row 5.
+
+**Many-to-many relationships**
+- `customers` ↔ `flights` is M:N, resolved by `bookings` + `flight_bookings`.
+- `customers` ↔ `hotels` is M:N, resolved by `bookings` + `hotel_bookings`.
+- `bookings` is a supertype with two subtypes (`flight_bookings`, `hotel_bookings`), modelled as table-per-subtype with a shared primary key.
+
+**Subtype rule.** "Exactly one subtype row per booking, matching `booking_type`" cannot be written as an ordinary CHECK (it needs to look at other tables). It is verified after loading in checks C3 and C4 (section 11).
+
+---
+
+## 4. Data dictionary
+
+Legend: **PK** primary key · **FK** foreign key · **UQ** unique · **NN** not null · **CK** check.
+
+### 4.1 `airports` (16 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `iata_code` | `VARCHAR(3)` | PK, CK `~ '^[A-Z]{3}$'` | A 3-letter IATA code is a stable natural key and is what `flights` refers to; no surrogate id is needed. |
+| `airport_name` | `VARCHAR(150)` | NN | Descriptive name; always present. |
+| `city_name` | `VARCHAR(100)` | NN | City served; always present. |
+| `country_code` | `CHAR(2)` | NN, CK `~ '^[A-Z]{2}$'` | ISO country code, always exactly 2 characters. |
+
+### 4.2 `airlines` (5 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `airline_code` | `VARCHAR(3)` | PK, CK `~ '^[A-Z0-9]{2,3}$'` | IATA airline codes are short and may contain digits (`6E`). |
+| `airline_name` | `VARCHAR(100)` | NN, UQ | Each airline has a distinct name, so it is a candidate key. |
+
+### 4.3 `customers` (40,000 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `customer_id` | `INTEGER` | PK | Surrogate key. |
+| `full_name` | `VARCHAR(150)` | NN | Not unique (only 500 distinct names for 40,000 customers), so it cannot be a key. |
+| `email` | `VARCHAR(255)` | NN, UQ, CK email pattern | Sign-in identifier and natural candidate key. Stored as supplied (mixed case), which is why R23 uses `lower(email)`. |
+| `phone` | `VARCHAR(20)` | NN, UQ | Text, not a number: no arithmetic is done on it and it can have leading zeros or a `+91` prefix. All 40,000 values are unique. |
+| `loyalty_tier` | `VARCHAR(20)` | NN, CK ∈ {BLUE, SILVER, GOLD, PLATINUM} | Closed set of tiers. |
+| `created_at` | `TIMESTAMPTZ` | NN | The CSV carries a `+05:30` offset, so a timestamp with time zone is needed. |
+
+### 4.4 `coupons` (30 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `coupon_code` | `VARCHAR(30)` | PK | Natural key referenced by `bookings.coupon_code`. |
+| `applies_to` | `VARCHAR(10)` | NN, CK ∈ {ALL, FLIGHT, HOTEL} | Which booking type the coupon is valid for. |
+| `discount_pct` | `NUMERIC(5,2)` | NN, CK `> 0 AND <= 100` | A percentage; exact decimal, not float. |
+| `max_discount` | `NUMERIC(12,2)` | NN, CK `> 0` | Money cap; exact decimal. |
+| `valid_from`, `valid_to` | `DATE` | NN, CK `valid_to >= valid_from` | Validity window; no time of day is needed. |
+
+### 4.5 `flights` (13,848 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `flight_id` | `INTEGER` | PK | One row per *dated* flight. `flight_no` repeats every day (24 distinct values for 13,848 flights), so it cannot be the key. |
+| `airline_code` | `VARCHAR(3)` | NN, FK → `airlines`, RESTRICT | Operating airline. |
+| `flight_no` | `VARCHAR(10)` | NN, CK `~ '^[A-Z0-9]{2,3}-[0-9]{3}$'` | Format seen in the data, e.g. `6E-137`. |
+| `origin`, `destination` | `VARCHAR(3)` | NN, FK → `airports`, RESTRICT, CK `origin <> destination` | Two foreign keys to the same table; a flight cannot start and end at the same airport. |
+| `departure_at`, `arrival_at` | `TIMESTAMPTZ` | NN, CK `arrival_at > departure_at` | The CSV has a time-zone offset; the CHECK enforces time order. |
+| `aircraft` | `VARCHAR(30)` | NN | Aircraft model name (3 models in the data). |
+| `total_seats` | `INTEGER` | NN, CK `> 0` | Capacity of this flight. |
+| `base_fare` | `NUMERIC(12,2)` | NN, CK `> 0` | Money: exact decimal. |
+| `status` | `VARCHAR(20)` | NN, CK ∈ {SCHEDULED, DELAYED, DEPARTED, LANDED, CANCELLED} | Closed set of statuses. |
+
+### 4.6 `hotels` (3,000 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `hotel_id` | `INTEGER` | PK | Surrogate key. |
+| `hotel_name` | `VARCHAR(200)` | NN | Name. Unique in this data, but not declared UNIQUE because different hotels can legitimately share a name. |
+| `city_name` | `VARCHAR(100)` | NN | City (18 distinct), used as a search filter. |
+| `star_rating` | `SMALLINT` | NN, CK 1–5 | Small whole number. |
+| `user_rating` | `NUMERIC(2,1)` | **NULL allowed**, CK NULL or 1–5 | Guest rating with one decimal. NULL for 134 hotels (reason in section 5). |
+| `amenities` | `JSONB` | NN, CK `jsonb_typeof(amenities) = 'object'` | **A JSON object of 7 boolean flags** (`gym, spa, pool, wifi, parking, breakfast, pet_friendly`); all 3,000 hotels have all 7 keys with boolean values. JSONB (binary JSON) is used so it can be queried with `->>` (R03) and indexed later. |
+| `check_in_time`, `check_out_time` | `TIME` | NN | Time of day only, no date. |
+
+### 4.7 `room_types` (9,000 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `room_type_id` | `INTEGER` | PK | Surrogate key. |
+| `hotel_id` | `INTEGER` | NN, FK → `hotels`, RESTRICT | Owning hotel. |
+| `room_name` | `VARCHAR(100)` | NN | Standard Room / Deluxe Room / Suite. |
+| `max_guests` | `SMALLINT` | NN, CK `> 0` | Capacity per room. |
+| `price_per_night` | `NUMERIC(12,2)` | NN, CK `> 0` | Money: exact decimal. |
+| `total_rooms` | `INTEGER` | NN, CK `> 0` | Inventory used by R04. |
+| *(constraint)* | | `UNIQUE (hotel_id, room_type_id)` | Logically redundant (the PK is already unique), but PostgreSQL needs a unique key on exactly these two columns so that `hotel_bookings` can reference the pair. |
+
+### 4.8 `bookings` (144,792 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `booking_id` | `INTEGER` | PK | Internal key. |
+| `booking_ref` | `VARCHAR(20)` | NN, UQ, CK `~ '^[A-Z0-9]{8}$'` | Customer-facing reference such as `MMA7772F`; a candidate key and the lookup column of R06 and W03. |
+| `customer_id` | `INTEGER` | NN, FK → `customers`, RESTRICT | Owner of the booking. |
+| `booking_type` | `VARCHAR(10)` | NN, CK ∈ {FLIGHT, HOTEL} | Discriminator of the supertype. |
+| `booked_at` | `TIMESTAMPTZ` | NN | Time of booking, with offset. |
+| `total_amount` | `NUMERIC(12,2)` | NN, CK `> 0` | Net amount payable (after discount). |
+| `coupon_code` | `VARCHAR(30)` | **NULL allowed**, FK → `coupons`, RESTRICT | NULL when no coupon was used. |
+| `discount` | `NUMERIC(12,2)` | NN, DEFAULT 0, CK `0 <= discount <= total_amount` | 0 when there is no coupon. |
+| `payment_method` | `VARCHAR(20)` | NN, CK ∈ {CARD, EMI, NETBANKING, UPI, WALLET} | Closed set. |
+| `status` | `VARCHAR(20)` | NN, CK ∈ {PENDING_PAYMENT, CONFIRMED, COMPLETED, CANCELLED} | Booking life cycle. |
+| `cancelled_at` | `TIMESTAMPTZ` | **NULL allowed** | Set only for cancelled bookings. |
+| `refund_amount` | `NUMERIC(12,2)` | **NULL allowed**, CK NULL or `0 <= refund <= total_amount` | Set only for cancelled bookings; a refund can never exceed what was paid. |
+
+Cross-column rules: `chk_booking_cancellation` (status = `CANCELLED` ⇔ `cancelled_at` and `refund_amount` are both present) and `chk_booking_coupon_discount` (no coupon ⇒ discount = 0).
+
+### 4.9 `flight_bookings` (84,899 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `booking_id` | `INTEGER` | PK, FK → `bookings`, CASCADE | PK and FK at once, so a booking has at most one flight-detail row. |
+| `flight_id` | `INTEGER` | NN, FK → `flights`, RESTRICT | The booked flight. |
+| `cabin` | `VARCHAR(20)` | NN, CK ∈ {ECONOMY, PREMIUM, BUSINESS} | Closed set. |
+| `passengers` | `SMALLINT` | NN, CK `> 0` | Passenger count (derived, see section 10). |
+| `fare_paid` | `NUMERIC(12,2)` | NN, CK `> 0` | Gross fare before the coupon (derived, see section 10). |
+
+### 4.10 `passengers` (163,380 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `booking_id` | `INTEGER` | PK (part), FK → `flight_bookings`, CASCADE | Parent flight booking. |
+| `seq_no` | `SMALLINT` | PK (part), CK `> 0` | Passenger number inside the booking (1, 2, 3…). **The primary key is the composite `(booking_id, seq_no)`.** No single column is a key: names and ages repeat and a seat is not unique. |
+| `full_name` | `VARCHAR(150)` | NN | Every passenger must be named for the manifest (R07). |
+| `age` | `SMALLINT` | NN, CK `>= 0` | Small whole number; observed range 1–75. |
+| `gender` | `CHAR(1)` | NN, CK ∈ {M, F, X} | Single-letter code. |
+| `seat_no` | `VARCHAR(5)` | **NULL allowed**, CK NULL or `~ '^[0-9]{1,2}[A-F]$'` | Assigned at web check-in, so NULL means "no seat yet" (section 5). Format like `16D`. |
+
+### 4.11 `hotel_bookings` (59,893 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `booking_id` | `INTEGER` | PK, FK → `bookings`, CASCADE | Shared key, as in `flight_bookings`. |
+| `hotel_id` | `INTEGER` | NN, FK → `hotels`, RESTRICT | The booked hotel. Redundant with the room type's hotel (section 10) but kept because R15 groups by hotel directly. |
+| `room_type_id` | `INTEGER` | NN, composite FK `(hotel_id, room_type_id)` → `room_types`, RESTRICT | The composite key guarantees the room type belongs to the booked hotel. |
+| `check_in`, `check_out` | `DATE` | NN, CK `check_out > check_in` | Dates, not timestamps; a stay has at least one night. |
+| `rooms`, `guests` | `SMALLINT` | NN, CK `> 0` | Small whole counts. |
+| `room_number` | `VARCHAR(20)` | **NULL allowed** | Assigned at check-in (section 5). Text, because a room label is an identifier, not a quantity. |
+
+### 4.12 `hotel_reviews` (15,913 rows)
+
+| Column | Type | Constraint | Why |
+|---|---|---|---|
+| `review_id` | `INTEGER` | PK | Surrogate key; a review has no natural key of its own. |
+| `booking_id` | `INTEGER` | NN, UQ, FK → `hotel_bookings`, CASCADE | UNIQUE allows at most one review per stay; it is a second candidate key. |
+| `hotel_id` | `INTEGER` | NN, FK → `hotels`, RESTRICT | Redundant copy of the booking's hotel, kept for hotel pages (section 10). |
+| `rating` | `SMALLINT` | NN, CK 1–5 | Star score; a review without a rating is meaningless. |
+| `title` | `VARCHAR(200)` | NN | Every review has a title (0 NULLs in the data). |
+| `review_text` | `TEXT` | **NULL allowed** | Free text of unlimited length; NULL when the guest wrote only a title and rating. |
+| `created_at` | `TIMESTAMPTZ` | NN | When the review was written. |
+
+---
+
+## 5. NULL vs NOT NULL: when and why a column is empty
+
+Counts come from the loaded database. Every column not listed here has no NULLs in the seed data and is declared `NOT NULL`.
+
+| Column | NULL rows | When it is NULL | Rule found in the data |
+|---|---:|---|---|
+| `bookings.coupon_code` | 127,144 | The customer used no coupon | NULL ⇔ `discount = 0` (0 exceptions in both directions) |
+| `bookings.cancelled_at` | 133,298 | The booking is not cancelled | NULL for exactly the 133,298 non-`CANCELLED` bookings |
+| `bookings.refund_amount` | 133,298 | The booking is not cancelled | Same rows. All 11,494 refunds equal exactly 70% of `total_amount`. |
+| `passengers.seat_no` | 21,612 | Seat not assigned yet (web check-in not done) | CONFIRMED: 5,322 of 5,322 have no seat. PENDING_PAYMENT: 124 of 125. COMPLETED: 14,450 of 145,029. CANCELLED: 1,716 of 12,904. |
+| `hotel_bookings.room_number` | 6,815 | The room is given at check-in, which has not happened (or never will) | NULL for all 4,810 CANCELLED, all 1,971 CONFIRMED (every CONFIRMED stay checks in on or after 1 Jul 2026) and all 34 PENDING_PAYMENT. **0 of 53,078 COMPLETED stays are NULL.** |
+| `hotels.user_rating` | 134 | The listing score is missing in the export | **Not** explained by "no reviews": 133 of the 134 hotels have reviews and all 134 have bookings. The NULLs are spread over all star ratings and cities. See problem 9 in section 12. |
+| `hotel_reviews.review_text` | 4,812 | The guest wrote only a title and a rating | No empty strings (0): NULL is used consistently |
+
+---
+
+## 6. UNIQUE constraints (natural candidate keys)
+
+| Table | Column(s) | Why |
+|---|---|---|
+| `airlines` | `airline_name` | Distinct for all 5 airlines |
+| `customers` | `email` | Sign-in identifier; no duplicates even ignoring case (40,000 distinct `lower(email)`) |
+| `customers` | `phone` | One customer per phone number |
+| `bookings` | `booking_ref` | Customer-facing reference identifies exactly one booking |
+| `hotel_reviews` | `booking_id` | At most one review per stay |
+| `room_types` | `(hotel_id, room_type_id)` | Target of the composite foreign key from `hotel_bookings` |
+
+---
+
+## 7. CHECK constraints (41 in total; the README asks for at least 12)
+
+| Table | Constraint | Rule |
+|---|---|---|
+| airports | `chk_airport_iata` | IATA code is 3 uppercase letters |
+| airports | `chk_airport_country` | Country code is 2 uppercase letters |
+| airlines | `chk_airline_code` | 2–3 uppercase letters/digits |
+| customers | `chk_customer_email` | `local@domain.tld` pattern, no spaces |
+| customers | `chk_customer_loyalty` | BLUE / SILVER / GOLD / PLATINUM |
+| coupons | `chk_coupon_applies` | ALL / FLIGHT / HOTEL |
+| coupons | `chk_coupon_discount` | 0 < percentage ≤ 100 |
+| coupons | `chk_coupon_max_discount` | cap > 0 |
+| coupons | `chk_coupon_dates` | `valid_to >= valid_from` |
+| flights | `chk_flight_number` | format `XX-123` |
+| flights | `chk_flight_route` | origin ≠ destination |
+| flights | `chk_flight_time` | arrival after departure |
+| flights | `chk_flight_seats` | seats > 0 |
+| flights | `chk_flight_fare` | fare > 0 |
+| flights | `chk_flight_status` | 5 allowed statuses |
+| hotels | `chk_hotel_star_rating` | 1–5 |
+| hotels | `chk_hotel_user_rating` | NULL or 1–5 |
+| hotels | `chk_hotel_amenities` | the JSON value is an object |
+| room_types | `chk_room_max_guests` | > 0 |
+| room_types | `chk_room_price` | > 0 |
+| room_types | `chk_room_total` | > 0 |
+| bookings | `chk_booking_reference` | 8 uppercase letters/digits |
+| bookings | `chk_booking_type` | FLIGHT / HOTEL |
+| bookings | `chk_booking_amount` | total > 0 |
+| bookings | `chk_booking_discount` | 0 ≤ discount ≤ total |
+| bookings | `chk_booking_coupon_discount` | no coupon ⇒ discount = 0 |
+| bookings | `chk_booking_payment` | 5 payment methods |
+| bookings | `chk_booking_status` | 4 statuses |
+| bookings | `chk_booking_cancellation` | CANCELLED ⇔ `cancelled_at` and `refund_amount` present |
+| bookings | `chk_booking_refund` | refund between 0 and `total_amount` |
+| flight_bookings | `chk_flight_cabin` | ECONOMY / PREMIUM / BUSINESS |
+| flight_bookings | `chk_flight_passengers` | passengers > 0 |
+| flight_bookings | `chk_flight_fare_paid` | fare > 0 |
+| passengers | `chk_passenger_sequence` | seq_no > 0 |
+| passengers | `chk_passenger_age` | age ≥ 0 |
+| passengers | `chk_passenger_gender` | M / F / X |
+| passengers | `chk_passenger_seat` | NULL or seat like `16D` |
+| hotel_bookings | `chk_hotel_booking_dates` | check-out after check-in |
+| hotel_bookings | `chk_hotel_booking_rooms` | rooms > 0 |
+| hotel_bookings | `chk_hotel_booking_guests` | guests > 0 |
+| hotel_reviews | `chk_review_rating` | 1–5 |
+
+---
+
+## 8. Indexes that exist after Phase 2
+
+Only the 18 indexes that PostgreSQL creates automatically for PRIMARY KEY and UNIQUE constraints exist (read from `pg_indexes`). No other index has been created, so the Phase 3 baseline reflects an untuned database.
+
+| Table | Indexes |
 |---|---|
-| `chk_airport_iata` | Airport code is three uppercase letters. |
-| `chk_airport_country` | Country code is two uppercase letters. |
-| `chk_airline_code` | Airline code is two or three uppercase letters/digits. |
-| `chk_customer_email` | Email follows a basic `local@domain.tld` pattern. |
-| `chk_customer_loyalty` | Loyalty tier is one of the four supported values. |
-| `chk_coupon_applies` | Coupon applies to `ALL`, `FLIGHT` or `HOTEL`. |
-| `chk_coupon_discount` | Discount percentage is greater than zero and at most 100. |
-| `chk_coupon_max_discount` | Maximum discount is positive. |
-| `chk_coupon_dates` | Coupon end date is not before its start date. |
-| `chk_flight_number` | Flight number follows the selected code-and-three-digits pattern. |
-| `chk_flight_route` | Origin and destination differ. |
-| `chk_flight_time` | Arrival is later than departure. |
-| `chk_flight_seats` | Total seats are positive. |
-| `chk_flight_fare` | Base fare is positive. |
-| `chk_flight_status` | Flight status is one of the five supported values. |
-| `chk_hotel_star_rating` | Star rating is between 1 and 5. |
-| `chk_hotel_user_rating` | User rating is NULL or between 1 and 5. |
-| `chk_hotel_amenities` | Amenities JSONB value is an object. |
-| `chk_room_max_guests` | Maximum guests is positive. |
-| `chk_room_price` | Price per night is positive. |
-| `chk_room_total` | Total rooms is positive. |
-| `chk_booking_reference` | Booking reference is eight uppercase letters/digits. |
-| `chk_booking_type` | Booking type is `FLIGHT` or `HOTEL`. |
-| `chk_booking_amount` | Total amount is positive. |
-| `chk_booking_discount` | Discount is between zero and total amount. |
-| `chk_booking_coupon_discount` | A non-zero discount requires a coupon code. |
-| `chk_booking_payment` | Payment method is one of the five supported values. |
-| `chk_booking_status` | Booking status is one of the four supported values. |
-| `chk_booking_cancellation` | Cancellation timestamp and refund are present exactly when status is `CANCELLED`. |
-| `chk_booking_refund` | Refund is NULL or between zero and total amount. |
-| `chk_flight_cabin` | Cabin is `ECONOMY`, `PREMIUM` or `BUSINESS`. |
-| `chk_flight_passengers` | Passenger count is positive. |
-| `chk_flight_fare_paid` | Fare paid is positive. |
-| `chk_passenger_sequence` | Passenger sequence number is positive. |
-| `chk_passenger_age` | Passenger age is non-negative. |
-| `chk_passenger_gender` | Gender code is `M`, `F` or `X`. |
-| `chk_passenger_seat` | Seat number is NULL or follows the selected row/letter pattern. |
-| `chk_hotel_booking_dates` | Check-out is after check-in. |
-| `chk_hotel_booking_rooms` | Number of rooms is positive. |
-| `chk_hotel_booking_guests` | Number of guests is positive. |
-| `chk_review_rating` | Review rating is between 1 and 5. |
+| airports | `airports_pkey` |
+| airlines | `airlines_pkey`, `airlines_airline_name_key` |
+| customers | `customers_pkey`, `customers_email_key`, `customers_phone_key` |
+| coupons | `coupons_pkey` |
+| flights | `flights_pkey` |
+| hotels | `hotels_pkey` |
+| room_types | `room_types_pkey`, `uq_room_hotel_pair` |
+| bookings | `bookings_pkey`, `bookings_booking_ref_key` |
+| flight_bookings | `flight_bookings_pkey` |
+| passengers | `pk_passengers` (on `booking_id, seq_no`) |
+| hotel_bookings | `hotel_bookings_pkey` |
+| hotel_reviews | `hotel_reviews_pkey`, `hotel_reviews_booking_id_key` |
 
-`NOT NULL` and `UNIQUE` constraints are also used throughout the schema, as shown in the data dictionary. These constraints are separate from the `CHECK` constraints listed above.
+---
 
-## 8. Seed-data inspection and integrity checks
+## 9. Functional dependencies and normal forms
 
-The supplied ZIP contains the following 12 CSV files. The row counts below were checked directly from the extracted CSV files.
+`A → B` means A determines B. "Verified" means we checked on the loaded data that no counter-example exists.
 
-| CSV / table | Expected rows from project brief | Rows inspected | Match |
-|---|---:|---:|---|
-| `airports` | 16 | 16 | Yes |
-| `airlines` | 5 | 5 | Yes |
-| `flights` | 13,848 | 13,848 | Yes |
-| `hotels` | 3,000 | 3,000 | Yes |
-| `room_types` | 9,000 | 9,000 | Yes |
-| `customers` | 40,000 | 40,000 | Yes |
-| `coupons` | 30 | 30 | Yes |
-| `bookings` | 144,792 | 144,792 | Yes |
-| `flight_bookings` | 84,899 | 84,899 | Yes |
-| `passengers` | 163,380 | 163,380 | Yes |
-| `hotel_bookings` | 59,893 | 59,893 | Yes |
-| `hotel_reviews` | 15,913 | 15,913 | Yes |
+| Table | Candidate keys | Functional dependencies | Normal form |
+|---|---|---|---|
+| `airports` | `iata_code` | `iata_code → airport_name, city_name, country_code` | **BCNF** |
+| `airlines` | `airline_code`, `airline_name` | `airline_code ↔ airline_name` | **BCNF** |
+| `customers` | `customer_id`, `email`, `phone` | `customer_id → full_name, email, phone, loyalty_tier, created_at`; `email → customer_id`; `phone → customer_id` | **BCNF** (every determinant is a key) |
+| `coupons` | `coupon_code` | `coupon_code → applies_to, discount_pct, max_discount, valid_from, valid_to` | **BCNF** |
+| `flights` | `flight_id` | `flight_id → all other columns`. Also observed (verified, 0 exceptions): `aircraft → total_seats` (3 models) and `flight_no → airline_code, origin, destination` (24 flight numbers). | **2NF, not 3NF/BCNF** if those observed rules are business rules. `aircraft` and `flight_no` are not keys, so `flight_id → aircraft → total_seats` is transitive. A fully normalised design would add `aircraft_models(aircraft, total_seats)` and `routes(flight_no, airline_code, origin, destination)`. We keep them on `flights` on purpose: the CSV and the hottest queries (R01, R02, R08) need these columns on `flights`, and the split would add joins. Real aircraft of one model can also have different seat layouts, so `total_seats` may legitimately vary per flight. |
+| `hotels` | `hotel_id` | `hotel_id → hotel_name, city_name, star_rating, user_rating, amenities, check_in_time, check_out_time` | **BCNF**. `amenities` is a single JSONB value, so it is atomic for 1NF. (A separate `hotel_amenities` table would be the fully relational alternative.) |
+| `room_types` | `room_type_id` | `room_type_id → hotel_id, room_name, max_guests, price_per_night, total_rooms` | **BCNF** |
+| `bookings` | `booking_id`, `booking_ref` | `booking_id → all columns`; `booking_ref → booking_id`. Derived (not a dependency on a non-key): `booking_type` follows from which subtype row exists; `discount` follows from the coupon and the gross amount (`discount = least(pct × gross, max_discount)`, holds for all 17,648 coupon bookings). | **BCNF** with respect to the declared keys |
+| `flight_bookings` | `booking_id` | `booking_id → flight_id, cabin, passengers, fare_paid` | **BCNF** inside the table; `passengers` and `fare_paid` are derivable from other tables (section 10) |
+| `passengers` | `(booking_id, seq_no)` | `(booking_id, seq_no) → full_name, age, gender, seat_no`. Full dependency on the whole key; no partial dependency on `booking_id` alone. | **BCNF** |
+| `hotel_bookings` | `booking_id` | `booking_id → hotel_id, room_type_id, check_in, check_out, rooms, guests, room_number`. Also `room_type_id → hotel_id` (verified, 0 exceptions, and enforced by the composite FK). | **2NF, not 3NF.** `booking_id → room_type_id → hotel_id` is transitive because `room_type_id` is not a key here. `hotel_id` is redundant. It is kept because the CSV has it and R15 uses it; the composite FK makes an inconsistency impossible. |
+| `hotel_reviews` | `review_id`, `booking_id` | both keys → all other columns. Also `booking_id → hotel_id` via `hotel_bookings` (verified, 0 mismatches). | **BCNF** within its own columns; `hotel_id` is a cross-table redundancy (section 10) |
 
-### Integrity checks performed against the CSV data
+**Summary:** 10 of 12 tables are in BCNF. `flights` and `hotel_bookings` are only in 2NF; both are intentional, documented denormalisations.
 
-These are pre-load checks performed against the supplied CSV files. They are not a substitute for running the SQL checks against the PostgreSQL database after `02_load_data.sql`; paste the actual PostgreSQL output here once the load is complete.
+---
 
-| Check | Result from CSV inspection |
-|---|---|
-| Primary-key and declared unique-key duplicates | No duplicates found for the checked keys: airport code, airline code/name, customer ID/email/phone, flight ID, booking ID/reference, flight-booking ID, hotel-booking ID, passenger `(booking_id, seq_no)`, and review ID/booking ID. |
-| Foreign-key references | No orphan references found for airline, airport origin/destination, hotel, customer, coupon, flight, booking, passenger-to-flight-booking, hotel/room-type composite, or review references. |
-| Booking subtype coverage | All 144,792 bookings have exactly one matching detail row: 84,899 flight bookings and 59,893 hotel bookings. No booking appears in both subtype tables and none is missing a subtype row. |
-| Passenger count consistency | All 84,899 flight-booking `passengers` values equal the number of corresponding rows in `passengers`. |
-| Booking cancellation fields | All cancelled bookings have both `cancelled_at` and `refund_amount`; all non-cancelled bookings have both fields NULL. |
-| Hotel review consistency | All 15,913 reviews reference an existing hotel booking and hotel; the review's `hotel_id` matches the linked hotel booking's `hotel_id`. |
-| Flight chronology | No flight has `arrival_at` earlier than or equal to `departure_at`; no flight booking in the seed data was made after that flight's departure. |
-| Hotel stay dates | No hotel booking has `check_out` earlier than or equal to `check_in`. |
-| Domain/range checks | The inspected values satisfy the DDL's airport/airline/flight/booking-reference formats, status and category sets, positive amount/count rules, rating ranges, and the passenger seat format. |
+## 10. Derived and redundant columns
 
-### Important scope note
+| Column | Derived from | Verified on the data | Keep? | Justification |
+|---|---|---|---|---|
+| `flight_bookings.fare_paid` | `bookings.total_amount + bookings.discount` | **84,899 / 84,899 match.** `fare_paid` is the *gross* fare before the coupon; `total_amount` is the *net* amount. | Keep | It is in the source export and records the pre-discount fare directly. Risk: it can drift if `discount` changes. |
+| `flight_bookings.passengers` | number of `passengers` rows of that booking | **0 mismatches** over 84,899 | Keep | R01, R08 and R19 sum it directly; counting rows would force a join to the largest child table. It must be updated together with the passenger rows. |
+| `hotel_reviews.hotel_id` | `hotel_bookings.hotel_id` via `booking_id` | **0 mismatches** over 15,913 | Keep | R18 and R24 group reviews by hotel without joining `hotel_bookings`. A plain FK cannot enforce equality across the two paths, so a trigger or a periodic check (C5) is needed. |
+| `hotel_bookings.hotel_id` | `room_types.hotel_id` via `room_type_id` | 0 exceptions | Keep | R15 joins on it directly. The composite FK guarantees consistency. |
+| `bookings.booking_type` | which subtype table has the row | 0 mismatches over 144,792 | Keep | Used as a filter and group column (R05, R12, R16); avoids probing both subtype tables. |
+| `bookings.discount` | coupon percentage, cap and gross amount | consistent for all 17,648 coupon bookings | Keep | Audit trail: stays correct even if the coupon later changes. |
+| `flights.total_seats` | aircraft model | 3 models, 1 seat count each | Keep | See section 9. |
 
-The checks above establish that the inspected seed rows appear compatible with the constraints in the submitted DDL. The PostgreSQL load is the final test: execute `sql/01_schema.sql`, then `sql/02_load_data.sql`, and record the actual `COUNT(*)` and integrity-query outputs here. Cross-table rules such as booking subtype exclusivity, passenger-count equality, and matching hotel IDs across a review and its booking are not enforced by ordinary row-level `CHECK` constraints; they should remain explicit load-time integrity checks unless additional triggers are implemented.
+---
 
-## 9. Indexes in this checkpoint
+## 11. Load and integrity checks
 
-No manually created performance indexes are added in Phase 2, as required by the project brief. PostgreSQL automatically creates indexes for the primary keys and unique constraints. These automatic indexes support key lookups and enforce uniqueness. Query-specific indexes will be considered only in the optimization phase after baseline measurements.
+### 11.1 How the data was loaded
 
-## 10. Conclusion
+`sql/01_schema.sql` was run on an empty database, then `sql/02_load_data.sql` with `ON_ERROR_STOP=1`. It uses `\copy` in an order that satisfies the foreign keys:
+`airports → airlines → customers → coupons → flights → hotels → room_types → bookings → flight_bookings → passengers → hotel_bookings → hotel_reviews`, followed by `ANALYZE`.
 
-The proposed `mmt` schema represents the 12 supplied CSV entities, uses data types suited to identifiers, money, dates, timestamps, times and JSON amenities, and defines primary keys, foreign keys, uniqueness, nullability and validation constraints. The seed-data inspection matched all stated row counts and found no violations in the checks listed above. The remaining CP1 validation step is to run the team's PostgreSQL schema and load scripts and add the database-generated row-count and integrity-check output to this document.
+```
+SET
+COPY 16
+COPY 5
+COPY 40000
+COPY 30
+COPY 13848
+COPY 3000
+COPY 9000
+COPY 144792
+COPY 84899
+COPY 163380
+COPY 59893
+COPY 15913
+ANALYZE
+```
+
+The load finished with **no errors**. Every constraint is validated (`SELECT count(*) FROM pg_constraint ... WHERE NOT convalidated` returns 0), so **no constraint had to be relaxed**: all 12 files satisfy the 12 PKs, 14 FKs, 6 UNIQUEs and 41 CHECKs.
+
+### 11.2 Row counts
+
+```sql
+SELECT 'airports' t, count(*) FROM airports UNION ALL SELECT 'airlines', count(*) FROM airlines
+UNION ALL SELECT 'flights', count(*) FROM flights UNION ALL SELECT 'hotels', count(*) FROM hotels
+UNION ALL SELECT 'room_types', count(*) FROM room_types UNION ALL SELECT 'customers', count(*) FROM customers
+UNION ALL SELECT 'coupons', count(*) FROM coupons UNION ALL SELECT 'bookings', count(*) FROM bookings
+UNION ALL SELECT 'flight_bookings', count(*) FROM flight_bookings UNION ALL SELECT 'passengers', count(*) FROM passengers
+UNION ALL SELECT 'hotel_bookings', count(*) FROM hotel_bookings UNION ALL SELECT 'hotel_reviews', count(*) FROM hotel_reviews;
+```
+
+```
+        t        | count
+-----------------+--------
+ airlines        |      5
+ airports        |     16
+ coupons         |     30
+ hotels          |   3000
+ room_types      |   9000
+ flights         |  13848
+ hotel_reviews   |  15913
+ customers       |  40000
+ hotel_bookings  |  59893
+ flight_bookings |  84899
+ passengers      | 163380
+ bookings        | 144792
+```
+
+| Table | Expected (README) | Loaded | Match |
+|---|---:|---:|:--:|
+| airports | 16 | 16 | ✅ |
+| airlines | 5 | 5 | ✅ |
+| flights | 13,848 | 13,848 | ✅ |
+| hotels | 3,000 | 3,000 | ✅ |
+| room_types | 9,000 | 9,000 | ✅ |
+| customers | 40,000 | 40,000 | ✅ |
+| coupons | 30 | 30 | ✅ |
+| bookings | 144,792 | 144,792 | ✅ |
+| flight_bookings | 84,899 | 84,899 | ✅ |
+| passengers | 163,380 | 163,380 | ✅ |
+| hotel_bookings | 59,893 | 59,893 | ✅ |
+| hotel_reviews | 15,913 | 15,913 | ✅ |
+
+### 11.3 Integrity checks
+
+All checks were run with the session time zone set to `Asia/Kolkata`. A result of 0 violations is the healthy outcome.
+
+**C1. Every flight booking has exactly `passengers` passenger rows**
+```sql
+SELECT count(*) AS c1_mismatch
+FROM flight_bookings fb
+WHERE fb.passengers <> (SELECT count(*) FROM passengers p WHERE p.booking_id = fb.booking_id);
+```
+```
+ c1_mismatch
+-------------
+           0
+```
+
+**C2. No flight was booked after it departed**
+```sql
+SELECT count(*) AS c2_booked_after_departure
+FROM bookings b
+JOIN flight_bookings fb USING (booking_id)
+JOIN flights f USING (flight_id)
+WHERE b.booked_at > f.departure_at;
+```
+```
+ c2_booked_after_departure
+---------------------------
+                         0
+```
+
+**C3. A booking is a flight booking or a hotel booking, never both and never neither**
+```sql
+SELECT count(*) FILTER (WHERE fb.booking_id IS NOT NULL AND hb.booking_id IS NOT NULL) AS both_subtypes,
+       count(*) FILTER (WHERE fb.booking_id IS NULL AND hb.booking_id IS NULL)         AS neither
+FROM bookings b
+LEFT JOIN flight_bookings fb USING (booking_id)
+LEFT JOIN hotel_bookings hb USING (booking_id);
+```
+```
+ both_subtypes | neither
+---------------+---------
+             0 |       0
+```
+
+**C4. `booking_type` agrees with the subtype table**
+```sql
+SELECT count(*) AS c4_mismatch
+FROM bookings b
+LEFT JOIN flight_bookings fb USING (booking_id)
+LEFT JOIN hotel_bookings hb USING (booking_id)
+WHERE (b.booking_type = 'FLIGHT' AND fb.booking_id IS NULL)
+   OR (b.booking_type = 'HOTEL'  AND hb.booking_id IS NULL);
+```
+```
+ c4_mismatch
+-------------
+           0
+```
+(84,899 FLIGHT bookings and 59,893 HOTEL bookings: equal to the subtype row counts.)
+
+**C5. A review's `hotel_id` equals the hotel of its booking**
+```sql
+SELECT count(*) AS c5_mismatch
+FROM hotel_reviews r JOIN hotel_bookings hb USING (booking_id)
+WHERE r.hotel_id <> hb.hotel_id;
+```
+```
+ c5_mismatch
+-------------
+           0
+```
+
+**C6. A booking is never cancelled before it was made, and a refund never exceeds the amount**
+```sql
+SELECT count(*) FILTER (WHERE cancelled_at < booked_at)    AS cancel_before_booking,
+       count(*) FILTER (WHERE refund_amount > total_amount) AS refund_gt_total
+FROM bookings;
+```
+```
+ cancel_before_booking | refund_gt_total
+-----------------------+-----------------
+                     0 |               0
+```
+
+**C7. No flight is sold above its capacity (non-cancelled bookings)**
+```sql
+SELECT count(*) AS c7_overbooked_flights FROM (
+  SELECT f.flight_id
+  FROM flights f
+  JOIN flight_bookings fb USING (flight_id)
+  JOIN bookings b USING (booking_id)
+  WHERE b.status <> 'CANCELLED'
+  GROUP BY f.flight_id, f.total_seats
+  HAVING sum(fb.passengers) > f.total_seats) x;
+```
+```
+ c7_overbooked_flights
+-----------------------
+                     0
+```
+
+**C8. No hotel booking asks for more rooms than the room type owns**
+```sql
+SELECT count(*) AS c8_too_many_rooms
+FROM hotel_bookings hb JOIN room_types rt USING (room_type_id)
+WHERE hb.rooms > rt.total_rooms;
+```
+```
+ c8_too_many_rooms
+-------------------
+                 0
+```
+
+**C9. Only completed stays are reviewed, and never before check-out**
+```sql
+SELECT count(*) FILTER (WHERE b.status <> 'COMPLETED')            AS not_completed,
+       count(*) FILTER (WHERE r.created_at::date < hb.check_out)  AS before_checkout
+FROM hotel_reviews r
+JOIN hotel_bookings hb USING (booking_id)
+JOIN bookings b USING (booking_id);
+```
+```
+ not_completed | before_checkout
+---------------+-----------------
+             0 |               0
+```
+
+**C10. `fare_paid = total_amount + discount` for flight bookings**
+```sql
+SELECT count(*) FILTER (WHERE fb.fare_paid = b.total_amount + b.discount) AS matching,
+       count(*) AS total
+FROM flight_bookings fb JOIN bookings b USING (booking_id);
+```
+```
+ matching | total
+----------+-------
+    84899 | 84899
+```
+
+**C11. A seat is not given twice inside the same booking**
+```sql
+SELECT count(*) AS c11_duplicate_seat_in_booking FROM (
+  SELECT 1 FROM passengers WHERE seat_no IS NOT NULL
+  GROUP BY booking_id, seat_no HAVING count(*) > 1) x;
+```
+```
+ c11_duplicate_seat_in_booking
+-------------------------------
+                             0
+```
+
+All 11 checks pass. The three checks that do **not** pass are data problems and are listed in section 12 (problems 1, 2 and 3).
+
+---
+
+## 12. Data problems found
+
+| # | Problem | Evidence (query result) | What we did |
+|---|---|---|---|
+| 1 | **R13 returns no rows because of NULL handling.** `bookings.coupon_code` has 127,144 NULLs, and `x NOT IN (list containing NULL)` is never true, so the query returns 0 rows. 10 coupons are really unused: `DIWALI29, FIRSTTRIP26, FLYNOW21, GOAFEST23, HDFCFLY27, ICICISTAY28, MMTSUPER30, MONSOON24, STAYHAPPY22, WEEKEND25`. | `NOT IN` → **0** rows; `NOT EXISTS` → **10** rows | The schema keeps `coupon_code` nullable (correct modelling). The query itself is not changed in Phase 2. |
+| 2 | **The same seat is given to more than one passenger on a flight.** A `UNIQUE (flight_id, seat_no)` rule is therefore impossible. | `SELECT count(*) FROM (SELECT 1 FROM passengers p JOIN flight_bookings fb USING (booking_id) WHERE seat_no IS NOT NULL GROUP BY fb.flight_id, p.seat_no HAVING count(*) > 1) x;` → **21,251** (flight, seat) pairs | Not enforced. Seat uniqueness is checked only inside one booking (C11). |
+| 3 | **Guests above room capacity.** Some hotel bookings have more guests than `max_guests × rooms` (3 guests in 1 room whose `max_guests` is 2). | `... WHERE hb.guests > rt.max_guests * hb.rooms` → **9,994** hotel bookings | No CHECK added (it would reject valid seed rows). Reported only. |
+| 4 | **`fare_paid` is gross, `total_amount` is net.** The tempting test `fare_paid = total_amount − discount` matches only the 74,836 bookings without a coupon. | C10: `fare_paid = total_amount + discount` for 84,899 / 84,899 | Both columns kept (section 10). |
+| 5 | **Every refund is exactly 70% of `total_amount`** (11,494 of 11,494 cancellations); there are no partial or full refunds. | `count(*) FILTER (WHERE refund_amount = round(total_amount * 0.7, 2))` = 11,494 of 11,494 cancelled | The general rule `refund ≤ total_amount` is kept as the CHECK. |
+| 6 | **The snapshot date is 30 Jun 2026**, so status values depend on time. All 97 PENDING_PAYMENT bookings were made on 30 Jun 2026. Flights before 30 Jun are LANDED (12,835) or CANCELLED (245); on 30 Jun they are DELAYED (6), DEPARTED (14) or SCHEDULED (4); after 30 Jun all 744 are SCHEDULED. | `min/max(booked_at::date)` of pending = 2026-06-30 | Explains R08, R10, R11 and W04. No schema change. |
+| 7 | **Emails have mixed case** (e.g. `@Rediffmail.com`). All 40,000 differ from `lower(email)`, but there are no case-insensitive duplicates (40,000 distinct lowercased values). | `count(DISTINCT lower(email))` = 40,000; `count(*) FILTER (WHERE email <> lower(email))` = 40,000 | `email` is stored as supplied; R23 must search on `lower(email)`. |
+| 8 | **Seats are missing even on completed and cancelled bookings** (14,450 of 145,029 passengers on COMPLETED bookings, 1,716 of 12,904 on CANCELLED). | section 5 | `seat_no` must stay nullable. |
+| 9 | **`hotels.user_rating` is NULL for 134 hotels (4.5%), and this is not "no reviews yet".** 133 of the 134 have reviews, all 134 have bookings, and they are spread across all star ratings and cities. `user_rating` also does not track the reviews in the data (correlation with the average `hotel_reviews.rating` is about −0.01). | counts in section 5 | Column stays nullable. R03 uses `NULLS LAST`, so unrated hotels sort at the end. |
+| 10 | **Reference data is very repetitive:** only 24 distinct `flight_no` values for 13,848 flights, 3 aircraft models, and 3 `room_name` values for all 9,000 room types. | `count(DISTINCT ...)` | Explains the two non-3NF dependencies in section 9. |
+| 11 | **Names are not unique** (500 distinct names among 40,000 customers). | `count(DISTINCT full_name)` = 500 | `customer_id` is the key; `email` and `phone` are the candidate keys. |
