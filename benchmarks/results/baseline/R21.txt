@@ -1,0 +1,105 @@
+=== R21 run 1 ===
+Sort  (cost=6124.00..6124.24 rows=96 width=16) (actual time=36.578..36.581 rows=24.00 loops=1)
+  Sort Key: (count(*)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=2003
+  ->  HashAggregate  (cost=6119.88..6120.84 rows=96 width=16) (actual time=36.560..36.565 rows=24.00 loops=1)
+        Group Key: f.origin, f.destination
+        Batches: 1  Memory Usage: 32kB
+        Buffers: shared hit=2000
+        ->  Hash Join  (cost=2482.72..6017.30 rows=13678 width=8) (actual time=25.357..34.034 rows=13700.00 loops=1)
+              Hash Cond: (p.booking_id = fb.booking_id)
+              Buffers: shared hit=2000
+              ->  Seq Scan on passengers p  (cost=0.00..3258.25 rows=37213 width=4) (actual time=0.007..12.864 rows=36837.00 loops=1)
+                    Filter: (age >= 60)
+                    Rows Removed by Filter: 126543
+                    Buffers: shared hit=1216
+              ->  Hash  (cost=2092.64..2092.64 rows=31206 width=12) (actual time=16.399..16.400 rows=31433.00 loops=1)
+                    Buckets: 32768  Batches: 1  Memory Usage: 1607kB
+                    Buffers: shared hit=784
+                    ->  Hash Join  (cost=396.73..2092.64 rows=31206 width=12) (actual time=6.387..13.253 rows=31433.00 loops=1)
+                          Hash Cond: (fb.flight_id = f.flight_id)
+                          Buffers: shared hit=784
+                          ->  Seq Scan on flight_bookings fb  (cost=0.00..1472.99 rows=84899 width=8) (actual time=0.005..3.786 rows=84899.00 loops=1)
+                                Buffers: shared hit=624
+                          ->  Hash  (cost=333.10..333.10 rows=5090 width=12) (actual time=1.587..1.587 rows=5088.00 loops=1)
+                                Buckets: 8192  Batches: 1  Memory Usage: 283kB
+                                Buffers: shared hit=160
+                                ->  Seq Scan on flights f  (cost=0.00..333.10 rows=5090 width=12) (actual time=0.552..1.097 rows=5088.00 loops=1)
+                                      Filter: (departure_at >= '2026-01-01 00:00:00+05:30'::timestamp with time zone)
+                                      Rows Removed by Filter: 8760
+                                      Buffers: shared hit=160
+Planning:
+  Buffers: shared hit=295
+Planning Time: 0.818 ms
+Execution Time: 36.675 ms
+=== R21 run 2 ===
+Sort  (cost=6124.00..6124.24 rows=96 width=16) (actual time=38.057..38.060 rows=24.00 loops=1)
+  Sort Key: (count(*)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=2003
+  ->  HashAggregate  (cost=6119.88..6120.84 rows=96 width=16) (actual time=38.038..38.043 rows=24.00 loops=1)
+        Group Key: f.origin, f.destination
+        Batches: 1  Memory Usage: 32kB
+        Buffers: shared hit=2000
+        ->  Hash Join  (cost=2482.72..6017.30 rows=13678 width=8) (actual time=26.489..35.617 rows=13700.00 loops=1)
+              Hash Cond: (p.booking_id = fb.booking_id)
+              Buffers: shared hit=2000
+              ->  Seq Scan on passengers p  (cost=0.00..3258.25 rows=37213 width=4) (actual time=0.006..13.772 rows=36837.00 loops=1)
+                    Filter: (age >= 60)
+                    Rows Removed by Filter: 126543
+                    Buffers: shared hit=1216
+              ->  Hash  (cost=2092.64..2092.64 rows=31206 width=12) (actual time=16.843..16.844 rows=31433.00 loops=1)
+                    Buckets: 32768  Batches: 1  Memory Usage: 1607kB
+                    Buffers: shared hit=784
+                    ->  Hash Join  (cost=396.73..2092.64 rows=31206 width=12) (actual time=6.606..13.519 rows=31433.00 loops=1)
+                          Hash Cond: (fb.flight_id = f.flight_id)
+                          Buffers: shared hit=784
+                          ->  Seq Scan on flight_bookings fb  (cost=0.00..1472.99 rows=84899 width=8) (actual time=0.006..3.836 rows=84899.00 loops=1)
+                                Buffers: shared hit=624
+                          ->  Hash  (cost=333.10..333.10 rows=5090 width=12) (actual time=1.759..1.759 rows=5088.00 loops=1)
+                                Buckets: 8192  Batches: 1  Memory Usage: 283kB
+                                Buffers: shared hit=160
+                                ->  Seq Scan on flights f  (cost=0.00..333.10 rows=5090 width=12) (actual time=0.648..1.252 rows=5088.00 loops=1)
+                                      Filter: (departure_at >= '2026-01-01 00:00:00+05:30'::timestamp with time zone)
+                                      Rows Removed by Filter: 8760
+                                      Buffers: shared hit=160
+Planning:
+  Buffers: shared hit=295
+Planning Time: 0.776 ms
+Execution Time: 38.153 ms
+=== R21 run 3 ===
+Sort  (cost=6124.00..6124.24 rows=96 width=16) (actual time=38.467..38.470 rows=24.00 loops=1)
+  Sort Key: (count(*)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=2003
+  ->  HashAggregate  (cost=6119.88..6120.84 rows=96 width=16) (actual time=38.447..38.451 rows=24.00 loops=1)
+        Group Key: f.origin, f.destination
+        Batches: 1  Memory Usage: 32kB
+        Buffers: shared hit=2000
+        ->  Hash Join  (cost=2482.72..6017.30 rows=13678 width=8) (actual time=26.798..36.004 rows=13700.00 loops=1)
+              Hash Cond: (p.booking_id = fb.booking_id)
+              Buffers: shared hit=2000
+              ->  Seq Scan on passengers p  (cost=0.00..3258.25 rows=37213 width=4) (actual time=0.008..13.812 rows=36837.00 loops=1)
+                    Filter: (age >= 60)
+                    Rows Removed by Filter: 126543
+                    Buffers: shared hit=1216
+              ->  Hash  (cost=2092.64..2092.64 rows=31206 width=12) (actual time=16.833..16.834 rows=31433.00 loops=1)
+                    Buckets: 32768  Batches: 1  Memory Usage: 1607kB
+                    Buffers: shared hit=784
+                    ->  Hash Join  (cost=396.73..2092.64 rows=31206 width=12) (actual time=6.649..13.627 rows=31433.00 loops=1)
+                          Hash Cond: (fb.flight_id = f.flight_id)
+                          Buffers: shared hit=784
+                          ->  Seq Scan on flight_bookings fb  (cost=0.00..1472.99 rows=84899 width=8) (actual time=0.005..3.854 rows=84899.00 loops=1)
+                                Buffers: shared hit=624
+                          ->  Hash  (cost=333.10..333.10 rows=5090 width=12) (actual time=1.716..1.717 rows=5088.00 loops=1)
+                                Buckets: 8192  Batches: 1  Memory Usage: 283kB
+                                Buffers: shared hit=160
+                                ->  Seq Scan on flights f  (cost=0.00..333.10 rows=5090 width=12) (actual time=0.635..1.212 rows=5088.00 loops=1)
+                                      Filter: (departure_at >= '2026-01-01 00:00:00+05:30'::timestamp with time zone)
+                                      Rows Removed by Filter: 8760
+                                      Buffers: shared hit=160
+Planning:
+  Buffers: shared hit=295
+Planning Time: 0.840 ms
+Execution Time: 38.579 ms

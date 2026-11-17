@@ -1,0 +1,27 @@
+=== R23 run 1 ===
+Seq Scan on customers  (cost=0.00..1128.00 rows=200 width=21) (actual time=0.276..10.783 rows=1.00 loops=1)
+  Filter: (lower((email)::text) = 'siddharth.sharma1021@rediffmail.com'::text)
+  Rows Removed by Filter: 39999
+  Buffers: shared hit=528
+Planning:
+  Buffers: shared hit=96
+Planning Time: 0.324 ms
+Execution Time: 10.813 ms
+=== R23 run 2 ===
+Seq Scan on customers  (cost=0.00..1128.00 rows=200 width=21) (actual time=0.282..10.404 rows=1.00 loops=1)
+  Filter: (lower((email)::text) = 'siddharth.sharma1021@rediffmail.com'::text)
+  Rows Removed by Filter: 39999
+  Buffers: shared hit=528
+Planning:
+  Buffers: shared hit=96
+Planning Time: 0.337 ms
+Execution Time: 10.435 ms
+=== R23 run 3 ===
+Seq Scan on customers  (cost=0.00..1128.00 rows=200 width=21) (actual time=0.271..10.430 rows=1.00 loops=1)
+  Filter: (lower((email)::text) = 'siddharth.sharma1021@rediffmail.com'::text)
+  Rows Removed by Filter: 39999
+  Buffers: shared hit=528
+Planning:
+  Buffers: shared hit=96
+Planning Time: 0.323 ms
+Execution Time: 10.458 ms
