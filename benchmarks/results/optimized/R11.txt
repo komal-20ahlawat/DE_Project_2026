@@ -1,0 +1,50 @@
+=== R11 run 1 ===
+Index Only Scan using idx_bookings_status_booked_at on bookings  (cost=0.42..12.82 rows=101 width=31) (actual time=0.070..0.116 rows=92.00 loops=1)
+  Index Cond: ((status = 'PENDING_PAYMENT'::text) AND (booked_at < ('2026-06-30 23:59:00+05:30'::timestamp with time zone - '00:30:00'::interval)))
+  Heap Fetches: 92
+  Index Searches: 1
+  Buffers: shared hit=7
+Planning:
+  Buffers: shared hit=232
+Planning Time: 1.903 ms
+Execution Time: 0.164 ms
+=== R11 run 2 ===
+Index Only Scan using idx_bookings_status_booked_at on bookings  (cost=0.42..12.82 rows=101 width=31) (actual time=0.066..0.108 rows=92.00 loops=1)
+  Index Cond: ((status = 'PENDING_PAYMENT'::text) AND (booked_at < ('2026-06-30 23:59:00+05:30'::timestamp with time zone - '00:30:00'::interval)))
+  Heap Fetches: 92
+  Index Searches: 1
+  Buffers: shared hit=7
+Planning:
+  Buffers: shared hit=232
+Planning Time: 1.828 ms
+Execution Time: 0.165 ms
+=== R11 run 3 ===
+Index Only Scan using idx_bookings_status_booked_at on bookings  (cost=0.42..12.82 rows=101 width=31) (actual time=0.055..0.097 rows=92.00 loops=1)
+  Index Cond: ((status = 'PENDING_PAYMENT'::text) AND (booked_at < ('2026-06-30 23:59:00+05:30'::timestamp with time zone - '00:30:00'::interval)))
+  Heap Fetches: 92
+  Index Searches: 1
+  Buffers: shared hit=7
+Planning:
+  Buffers: shared hit=232
+Planning Time: 1.779 ms
+Execution Time: 0.144 ms
+=== R11 run 4 ===
+Index Only Scan using idx_bookings_status_booked_at on bookings  (cost=0.42..12.82 rows=101 width=31) (actual time=0.066..0.108 rows=92.00 loops=1)
+  Index Cond: ((status = 'PENDING_PAYMENT'::text) AND (booked_at < ('2026-06-30 23:59:00+05:30'::timestamp with time zone - '00:30:00'::interval)))
+  Heap Fetches: 92
+  Index Searches: 1
+  Buffers: shared hit=7
+Planning:
+  Buffers: shared hit=232
+Planning Time: 1.386 ms
+Execution Time: 0.157 ms
+=== R11 run 5 ===
+Index Only Scan using idx_bookings_status_booked_at on bookings  (cost=0.42..12.82 rows=101 width=31) (actual time=0.067..0.123 rows=92.00 loops=1)
+  Index Cond: ((status = 'PENDING_PAYMENT'::text) AND (booked_at < ('2026-06-30 23:59:00+05:30'::timestamp with time zone - '00:30:00'::interval)))
+  Heap Fetches: 92
+  Index Searches: 1
+  Buffers: shared hit=7
+Planning:
+  Buffers: shared hit=232
+Planning Time: 1.835 ms
+Execution Time: 0.183 ms

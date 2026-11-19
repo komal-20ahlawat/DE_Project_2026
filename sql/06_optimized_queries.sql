@@ -133,17 +133,13 @@ GROUP BY 1, 2
 ORDER BY 1, 2;
 
 -- @R13
--- Marketing: coupons that have never been used
--- OPTIMIZED + RESULT FIXED: NOT IN (subquery containing NULLs) returns ZERO rows
--- because bookings.coupon_code is NULL for bookings without a coupon
--- (x NOT IN (..., NULL) is never TRUE). NOT EXISTS ignores NULLs and returns
--- the real unused coupons; uses idx_bookings_coupon.
 SELECT c.coupon_code, c.applies_to, c.discount_pct
 FROM coupons c
-WHERE coupon_code NOT IN (
-    SELECT coupon_code
-    FROM bookings
-)
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM bookings b
+    WHERE b.coupon_code = c.coupon_code
+);
 
 -- @R14
 -- Airline partnerships: cancellation rate of flight bookings per airline
