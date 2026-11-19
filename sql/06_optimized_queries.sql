@@ -166,3 +166,152 @@ JOIN bookings b ON b.booking_id = hb.booking_id AND b.status <> 'CANCELLED'
 WHERE hb.check_in < '2026-07-01' AND hb.check_out > '2026-06-01'
 GROUP BY h.city_name
 ORDER BY room_nights DESC;
+
+-- @R16
+-- Insights: average days between booking and travel, per booking type and loyalty tier
+-- OPTIMIZED: reads the summary table mv_lead_days_by_tier (defined in
+-- 05_indexes.sql with the original query). Refreshed nightly.
+SELECT booking_type, loyalty_tier, avg_lead_days
+FROM mv_lead_days_by_tier
+ORDER BY 1, 2;
+
+-- @R17
+-- Loyalty: customers with 3 or more completed trips that started in 2026
+SELECT b.customer_id, count(*) AS trips, sum(b.total_amount) AS spend
+FROM bookings b
+WHERE b.status = 'COMPLETED'
+  AND b.booked_at >= '2026-01-01'
+GROUP BY b.customer_id
+HAVING count(*) >= 3
+ORDER BY trips DESC, spend DESC;
+
+-- @R18
+-- Hotel page: Goa reviews that mention breakfast
+SELECT r.review_id, h.hotel_name, r.rating, r.review_text
+FROM hotel_reviews r
+JOIN hotels h ON h.hotel_id = r.hotel_id
+WHERE h.city_name = 'Goa'
+  AND r.review_text ILIKE '%breakfast%'
+ORDER BY r.created_at DESC
+LIMIT 30;
+
+-- @R19
+-- Operations: passengers booked on every flight departing in June 2026
+-- OPTIMIZED: correlated subquery (run once per flight) replaced by one
+-- join + GROUP BY. count(p.booking_id) gives 0 for flights without passengers,
+-- exactly like the original count(*) subquery.
+SELECT f.flight_id, f.flight_no, f.departure_at,
+       count(p.booking_id) AS passengers
+FROM flights f
+LEFT JOIN flight_bookings fb ON fb.flight_id = f.flight_id
+LEFT JOIN passengers p       ON p.booking_id = fb.booking_id
+WHERE f.departure_at >= '2026-06-01' AND f.departure_at < '2026-07-01'
+GROUP BY f.flight_id, f.flight_no, f.departure_at
+ORDER BY passengers DESC, f.departure_at;
+
+-- @R20
+-- Finance: bookings per day and running total for June 2026
+-- OPTIMIZED: booked_at::date BETWEEN ... replaced by a sargable range
+-- (idx_bookings_booked_at_cover, Index Only Scan).
+SELECT day, bookings, sum(bookings) OVER (ORDER BY day) AS running_total
+FROM (
+    SELECT booked_at::date AS day, count(*) AS bookings
+    FROM bookings
+    WHERE booked_at >= '2026-06-01 00:00:00+05:30'
+      AND booked_at <  '2026-07-01 00:00:00+05:30'
+    GROUP BY 1
+) d
+ORDER BY day;
+
+-- @R21
+-- Concessions: senior-citizen passengers (60+) per route in 2026
+SELECT f.origin, f.destination, count(*) AS senior_passengers
+FROM passengers p
+JOIN flight_bookings fb ON fb.booking_id = p.booking_id
+JOIN flights f          ON f.flight_id = fb.flight_id
+WHERE p.age >= 60
+  AND f.departure_at >= '2026-01-01'
+GROUP BY f.origin, f.destination
+ORDER BY senior_passengers DESC;
+
+-- @R22
+-- Support console: all bookings, newest first, page 4,001 (25 per page)
+-- Unchanged text: OFFSET is kept so the result is identical. idx_bookings_booked_at_cover
+-- (booked_at DESC, covering) turns it into an Index Only Scan with no sort.
+-- Production keyset version (needs the last row of the previous page,
+-- :last_booked_at / :last_booking_id, which the app remembers per page;
+-- for the large data take them from the row at position 100000):
+--   SELECT booking_id, booking_ref, booking_type, status, total_amount, booked_at
+--   FROM bookings
+--   WHERE (booked_at, booking_id) < (:last_booked_at, :last_booking_id)
+--   ORDER BY booked_at DESC, booking_id DESC
+--   LIMIT 25;
+SELECT booking_id, booking_ref, booking_type, status, total_amount, booked_at
+FROM bookings
+ORDER BY booked_at DESC
+OFFSET 100000
+LIMIT 25;
+
+-- @R23
+-- Sign-in: find the customer by email, ignoring case
+SELECT customer_id, full_name, loyalty_tier
+FROM customers
+WHERE lower(email) = 'siddharth.sharma1021@rediffmail.com';
+
+-- @R24
+-- Hotel ranking: Goa hotels with at least 5 reviews, by average review rating
+SELECT h.hotel_id, h.hotel_name, round(avg(r.rating), 2) AS avg_rating, count(*) AS reviews
+FROM hotels h
+JOIN hotel_reviews r ON r.hotel_id = h.hotel_id
+WHERE h.city_name = 'Goa'
+GROUP BY h.hotel_id, h.hotel_name
+HAVING count(*) >= 5
+ORDER BY avg_rating DESC, reviews DESC
+LIMIT 20;
+
+-- @R25
+-- Insights: last-minute flight bookings (made less than 24 hours before departure) in 2026
+SELECT b.booking_id, b.booked_at, f.departure_at, f.origin, f.destination
+FROM bookings b
+JOIN flight_bookings fb ON fb.booking_id = b.booking_id
+JOIN flights f          ON f.flight_id = fb.flight_id
+WHERE f.departure_at - b.booked_at < interval '24 hours'
+  AND b.booked_at >= '2026-01-01'
+ORDER BY b.booked_at DESC;
+
+-- @W01
+-- Checkout: create a pending flight booking for customer 1021
+INSERT INTO bookings (booking_id, booking_ref, customer_id, booking_type, booked_at, total_amount, payment_method, status)
+VALUES (90000001, 'MMZZ0001', 1021, 'FLIGHT', '2026-07-01 10:00:00+05:30', 5400.00, 'UPI', 'PENDING_PAYMENT');
+
+-- @W02
+-- Payment gateway callback: confirm the oldest booking that is waiting for payment
+UPDATE bookings
+SET status = 'CONFIRMED'
+WHERE booking_id = (SELECT min(booking_id) FROM bookings WHERE status = 'PENDING_PAYMENT');
+
+-- @W03
+-- Customer cancels booking MMA7772F with a 70% refund
+UPDATE bookings
+SET status = 'CANCELLED', cancelled_at = '2026-07-01 11:00:00+05:30', refund_amount = round(total_amount * 0.7, 2)
+WHERE booking_ref = 'MMA7772F' AND status <> 'CANCELLED';
+
+-- @W04
+-- Flight ops: every flight that was scheduled to depart before 1 July 2026 has now departed
+UPDATE flights
+SET status = 'DEPARTED'
+WHERE status IN ('SCHEDULED', 'DELAYED')
+  AND departure_at < '2026-07-01 00:00:00+05:30';
+
+-- @W05
+-- Front desk: assign room numbers to every guest checking in on 1 July 2026
+UPDATE hotel_bookings hb
+SET room_number = (100 + hb.booking_id % 400)::text
+FROM bookings b
+WHERE b.booking_id = hb.booking_id
+  AND b.status = 'CONFIRMED'
+  AND hb.check_in = '2026-07-01'
+  AND hb.room_number IS NULL;
+
+-- @END
+ROLLBACK;
